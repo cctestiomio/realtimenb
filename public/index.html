@@ -51,7 +51,10 @@
           <button class="stream-btn" type="button" data-stream-btn>Open official LoL Twitch stream</button>
         </div>
 
-        <p class="error" data-error role="alert"></p>
+        <div class="meta-row">
+            <p class="error" data-error role="alert"></p>
+            <small class="refresh-time" data-refresh-time></small>
+        </div>
       </section>
     </template>
 
@@ -60,10 +63,14 @@
       /* Make live games look clickable */
       [data-live] > * { cursor: pointer; transition: background 0.2s ease; }
       [data-live] > *:hover { background: rgba(128, 128, 128, 0.1); }
+      .meta-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 0.8rem; color: var(--text-muted); }
     </style>
     <script>
       // Global listener: Clicking LIVE games opens their Twitch link
       document.addEventListener('click', (e) => {
+        // Prevent opening stream if clicking on the scoreboard or other interactive elements
+        if (e.target.closest('[data-score]') || e.target.closest('button') || e.target.closest('input')) return;
+
         const liveMatch = e.target.closest('[data-live] > *');
         if (!liveMatch) return;
         
