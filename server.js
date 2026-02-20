@@ -8,8 +8,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, 'public');
 
+const FAST_POLL_MS = 1000;
+const HEARTBEAT_MS = 15000;
 const UPCOMING_WINDOW_MS = 12 * 60 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 8000;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -36,7 +37,7 @@ const TEAM_ALIASES = {
   TOR: ['tor', 'raptors', 'toronto'], UTA: ['uta', 'jazz', 'utah'], WAS: ['was', 'wizards', 'washington']
 };
 
-const normalize = (v = '') => v.toLowerCase().trim();
+const normalize = (value = '') => value.toLowerCase().trim();
 const unique = (arr) => [...new Set(arr)];
 
 function parseDate(value) {
@@ -49,27 +50,15 @@ function inNext12Hours(ts) {
   return ts && ts >= now && ts <= now + UPCOMING_WINDOW_MS;
 }
 
-function withTimeout(ms) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error('timeout')), ms);
-  return { controller, timeout };
-}
-
 async function fetchJson(url) {
-  const { controller, timeout } = withTimeout(FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: { 'User-Agent': 'realtimenb/1.0' }
-    });
-    if (!response.ok) throw new Error(`Upstream request failed: ${response.status}`);
-    return await response.json();
-  } catch (error) {
-    throw new Error(`Fetch failed for ${new URL(url).hostname}: ${error.message}`);
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: {
+      'User-Agent': 'realtimenb/1.0'
+    }
+  });
+  if (!response.ok) throw new Error(`Upstream request failed: ${response.status}`);
+  return response.json();
 }
 
 function parseQueryTeams(query) {
@@ -101,36 +90,43 @@ function serializeNbaGame(game) {
   };
 }
 
-function pickNbaGame(rawGames, query) {
+function pickNbaGame(games, query) {
   const q = normalize(query);
-  if (!rawGames.length) return null;
-  if (!q) return rawGames[0];
+  if (!games?.length) return null;
+  if (!q) return games[0];
 
-  const byId = rawGames.find((g) => g.gameId === q || g.gameCode?.toLowerCase() === q);
+  const byId = games.find((g) => g.gameId === q || g.gameCode?.toLowerCase() === q);
   if (byId) return byId;
 
   const teams = parseQueryTeams(q);
   if (teams.length >= 2) {
-    const both = rawGames.find((g) => teams.every((t) => [g.homeTeam.teamTricode, g.awayTeam.teamTricode].includes(t)));
+    const both = games.find((g) => teams.every((t) => [g.homeTeam.teamTricode, g.awayTeam.teamTricode].includes(t)));
     if (both) return both;
   }
   if (teams.length) {
-    const one = rawGames.find((g) => [g.homeTeam.teamTricode, g.awayTeam.teamTricode].includes(teams[0]));
+    const one = games.find((g) => [g.homeTeam.teamTricode, g.awayTeam.teamTricode].includes(teams[0]));
     if (one) return one;
   }
 
-  return rawGames.find((g) => normalize(`${g.awayTeam.teamCity} ${g.awayTeam.teamName} ${g.homeTeam.teamCity} ${g.homeTeam.teamName} ${g.gameCode}`).includes(q)) || null;
+  return games.find((g) => normalize(`${g.awayTeam.teamCity} ${g.awayTeam.teamName} ${g.homeTeam.teamCity} ${g.homeTeam.teamName} ${g.gameCode}`).includes(q)) || null;
 }
 
 async function getNbaData() {
   const payload = await fetchJson(SCOREBOARD_URL);
-  const rawGames = payload?.scoreboard?.games || [];
-  const games = rawGames.map(serializeNbaGame);
+  const games = payload?.scoreboard?.games || [];
+  const serialized = games.map(serializeNbaGame);
+
   return {
-    rawGames,
-    games,
-    upcoming: games.filter((g) => inNext12Hours(parseDate(g.startTime)))
+    games: serialized,
+    upcoming: serialized.filter((g) => inNext12Hours(parseDate(g.startTime)))
   };
+}
+
+function pickByQuery(events, query) {
+  const q = normalize(query);
+  if (!events?.length) return null;
+  if (!q) return events[0];
+  return events.find((event) => normalize(`${event.matchId} ${event.label} ${event.status}`).includes(q)) || null;
 }
 
 function serializeEsportEvent(item, overrides = {}) {
@@ -146,33 +142,33 @@ function serializeEsportEvent(item, overrides = {}) {
   };
 }
 
-function pickByQuery(events, query) {
-  const q = normalize(query);
-  if (!events?.length) return null;
-  if (!q) return events[0];
-  return events.find((e) => normalize(`${e.matchId} ${e.label} ${e.status} ${e.league}`).includes(q)) || null;
-}
-
 async function getLolData() {
   const payload = await fetchJson(LOL_SCHEDULE_URL);
   const events = payload?.data?.schedule?.events || [];
-  const games = events.map((e) => {
-    const teams = e.match?.teams || [];
+  const mapped = events.map((e) => {
+    const match = e.match || {};
+    const teams = match.teams || [];
+    const team1 = teams[0]?.name || 'TBD';
+    const team2 = teams[1]?.name || 'TBD';
     return serializeEsportEvent({
       matchId: e.id,
-      label: `${teams[0]?.name || 'TBD'} vs ${teams[1]?.name || 'TBD'}`,
+      label: `${team1} vs ${team2}`,
       status: e.state || 'scheduled',
       startTime: e.startTime,
-      league: e.league?.name || 'LoL Esports'
+      league: e.league?.name || 'LoL Esports',
+      score: match.strategy?.count || null
     });
   });
-  return { games, upcoming: games.filter((g) => inNext12Hours(parseDate(g.startTime))) };
+  return {
+    games: mapped,
+    upcoming: mapped.filter((m) => inNext12Hours(parseDate(m.startTime)))
+  };
 }
 
 async function getValorantData() {
   const payload = await fetchJson(VAL_SCHEDULE_URL);
   const items = payload?.data?.segments || [];
-  const games = items.map((item) => serializeEsportEvent({
+  const mapped = items.map((item) => serializeEsportEvent({
     matchId: item.match_page || item.id,
     label: `${item.team1 || 'TBD'} vs ${item.team2 || 'TBD'}`,
     status: item.status || 'upcoming',
@@ -180,33 +176,46 @@ async function getValorantData() {
     league: item.tournament_name || 'VALORANT',
     score: item.score || null
   }));
-  return { games, upcoming: games.filter((g) => inNext12Hours(parseDate(g.startTime))) };
+  return {
+    games: mapped,
+    upcoming: mapped.filter((m) => inNext12Hours(parseDate(m.startTime)))
+  };
 }
 
 async function getCsData() {
   const payload = await fetchJson(CS_SCHEDULE_URL);
   const items = Array.isArray(payload) ? payload : payload?.matches || [];
-  const games = items.map((item) => serializeEsportEvent({
+  const mapped = items.map((item) => serializeEsportEvent({
     matchId: item.id,
     label: `${item.team1?.name || item.team1 || 'TBD'} vs ${item.team2?.name || item.team2 || 'TBD'}`,
     status: item.status || 'scheduled',
     startTime: item.date || item.time || null,
-    league: item.event?.name || item.tournament || 'Counter-Strike'
+    league: item.event?.name || item.tournament || 'Counter-Strike',
+    score: item.score || null
   }));
-  return { games, upcoming: games.filter((g) => inNext12Hours(parseDate(g.startTime))) };
+  return {
+    games: mapped,
+    upcoming: mapped.filter((m) => inNext12Hours(parseDate(m.startTime)))
+  };
 }
 
 const PROVIDERS = {
   nba: {
     getData: getNbaData,
-    pick: (data, query) => {
-      const target = pickNbaGame(data.rawGames, query);
-      return target ? serializeNbaGame(target) : null;
+    pick: (games, query) => {
+      const target = pickNbaGame(games.map((g) => ({
+        ...g,
+        gameId: g.gameId,
+        gameCode: g.gameId,
+        homeTeam: { teamTricode: g.home.code, teamCity: g.home.city, teamName: g.home.name },
+        awayTeam: { teamTricode: g.away.code, teamCity: g.away.city, teamName: g.away.name }
+      })), query);
+      return target ? games.find((g) => g.gameId === target.gameId) : null;
     }
   },
-  lol: { getData: getLolData, pick: (data, query) => pickByQuery(data.games, query) },
-  csgo: { getData: getCsData, pick: (data, query) => pickByQuery(data.games, query) },
-  valorant: { getData: getValorantData, pick: (data, query) => pickByQuery(data.games, query) }
+  lol: { getData: getLolData, pick: pickByQuery },
+  csgo: { getData: getCsData, pick: pickByQuery },
+  valorant: { getData: getValorantData, pick: pickByQuery }
 };
 
 function sendJson(res, status, body) {
@@ -218,7 +227,11 @@ async function serveStatic(res, pathname) {
   const relative = pathname === '/' ? '/index.html' : pathname;
   const safePath = path.normalize(relative).replace(/^\.+/, '');
   const filePath = path.join(publicDir, safePath);
-  if (!filePath.startsWith(publicDir)) return sendJson(res, 403, { error: 'Forbidden' });
+  if (!filePath.startsWith(publicDir)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
 
   try {
     const data = await fs.readFile(filePath);
@@ -226,61 +239,89 @@ async function serveStatic(res, pathname) {
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
     res.end(data);
   } catch {
-    sendJson(res, 404, { error: 'Not found' });
+    res.writeHead(404);
+    res.end('Not found');
   }
 }
 
-function getProvider(url, res) {
-  const sport = String(url.searchParams.get('sport') || 'nba').toLowerCase();
-  const provider = PROVIDERS[sport];
-  if (!provider) {
-    sendJson(res, 400, { error: `Unsupported sport "${sport}"` });
-    return null;
-  }
-  return provider;
+function handleStream(req, res, provider, query) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive'
+  });
+
+  let active = true;
+  let lastPayload = '';
+
+  const send = (event, data) => {
+    if (!active) return;
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const heartbeat = setInterval(() => {
+    if (active) res.write(': heartbeat\n\n');
+  }, HEARTBEAT_MS);
+
+  const poll = async () => {
+    try {
+      const data = await provider.getData();
+      const target = provider.pick(data.games, query);
+      if (!target) {
+        send('score', { error: `No game found for "${query}"`, query, suggestions: data.games.slice(0, 20).map((g) => g.label) });
+        return;
+      }
+      const next = JSON.stringify(target);
+      if (next !== lastPayload) {
+        lastPayload = next;
+        send('score', target);
+      }
+    } catch (error) {
+      send('score', { error: error.message, query });
+    }
+  };
+
+  poll();
+  const ticker = setInterval(poll, FAST_POLL_MS);
+
+  req.on('close', () => {
+    active = false;
+    clearInterval(heartbeat);
+    clearInterval(ticker);
+  });
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === '/api/games') {
-    const provider = getProvider(url, res);
-    if (!provider) return;
-
-    try {
-      const data = await provider.getData();
-      sendJson(res, 200, { games: data.games, upcoming: data.upcoming });
-    } catch (error) {
-      sendJson(res, 502, { error: error.message });
+    const sport = String(url.searchParams.get('sport') || 'nba').toLowerCase();
+    const provider = PROVIDERS[sport];
+    if (!provider) {
+      sendJson(res, 400, { error: `Unsupported sport "${sport}"` });
+      return;
     }
-    return;
-  }
-
-  if (url.pathname === '/api/track') {
-    const provider = getProvider(url, res);
-    if (!provider) return;
-
-    const query = String(url.searchParams.get('query') || '').trim();
-    if (!query) return sendJson(res, 400, { error: 'Missing query' });
 
     try {
       const data = await provider.getData();
-      const match = provider.pick(data, query);
-      if (!match) {
-        sendJson(res, 404, { error: `No game found for "${query}"`, suggestions: data.games.slice(0, 20).map((g) => g.label) });
-        return;
-      }
-      sendJson(res, 200, { match });
+      sendJson(res, 200, data);
     } catch (error) {
-      sendJson(res, 502, { error: error.message });
+      sendJson(res, 500, { error: error.message });
     }
     return;
   }
 
   if (url.pathname === '/api/stream') {
-    // Backward compatibility: old frontend used SSE. On Vercel/serverless this is unreliable,
-    // so provide a direct instruction error instead of hanging/retry loops.
-    sendJson(res, 410, { error: 'SSE stream is disabled. Use /api/track polling endpoint.' });
+    const sport = String(url.searchParams.get('sport') || 'nba').toLowerCase();
+    const provider = PROVIDERS[sport];
+    if (!provider) {
+      sendJson(res, 400, { error: `Unsupported sport "${sport}"` });
+      return;
+    }
+
+    const query = String(url.searchParams.get('query') || '');
+    handleStream(req, res, provider, query);
     return;
   }
 
