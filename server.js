@@ -18,6 +18,8 @@ const MIME = {
   '.json': 'application/json; charset=utf-8'
 };
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+=======
 const NBA_URL = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json';
 const NBA_FALLBACK_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard';
 const LOL_URL = 'https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US&leagueId=98767991310872058';
@@ -292,6 +294,7 @@ const PROVIDERS = {
   valorant: { getData: getValorantData, pick: (data, query) => pickByQuery(data.games, query) }
 };
 
+>>>>>>> main
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
@@ -313,6 +316,43 @@ async function serveStatic(res, pathname) {
   }
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (url.pathname === '/api/games' || url.pathname === '/api/track') {
+    const sport = String(url.searchParams.get('sport') || 'nba');
+    const provider = resolveProvider(sport);
+    if (!provider) return sendJson(res, 400, { error: `Unsupported sport "${sport}"` });
+
+    try {
+      const data = await provider.getData();
+
+      if (url.pathname === '/api/games') {
+        return sendJson(res, 200, { games: data.games, upcoming: data.upcoming, warning: data.warning || null });
+      }
+
+      const query = String(url.searchParams.get('query') || '').trim();
+      if (!query) return sendJson(res, 400, { error: 'Missing query' });
+
+      const match = provider.pick(data, query);
+      if (!match) {
+        return sendJson(res, 404, {
+          error: `No game found for "${query}"`,
+          suggestions: data.games.slice(0, 20).map((g) => g.label),
+          warning: data.warning || null
+        });
+      }
+
+      return sendJson(res, 200, { match, warning: data.warning || null });
+    } catch (error) {
+      return sendJson(res, 502, { error: error.message || 'Upstream error' });
+    }
+  }
+
+  if (url.pathname === '/api/stream') {
+    return sendJson(res, 410, { error: 'SSE stream is disabled. Use /api/track polling endpoint.' });
+=======
 function getProvider(url, res) {
   const sport = String(url.searchParams.get('sport') || 'nba').toLowerCase();
   const provider = PROVIDERS[sport];
@@ -361,6 +401,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/stream') {
     sendJson(res, 410, { error: 'SSE stream is disabled. Use /api/track polling endpoint.' });
     return;
+>>>>>>> main
   }
 
   await serveStatic(res, url.pathname);
