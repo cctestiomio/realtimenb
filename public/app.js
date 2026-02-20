@@ -13,30 +13,6 @@ const themeToggle = document.querySelector('#theme-toggle');
 
 const state = new Map();
 
-function formatPacificTime(isoValue) {
-  if (!isoValue) return 'TBD';
-  const date = new Date(isoValue);
-  if (Number.isNaN(date.getTime())) return String(isoValue);
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'America/Los_Angeles'
-  }).format(date);
-  return `${formatted} PST (GMT-8)`;
-}
-
-async function safeJson(res) {
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text?.slice(0, 180) || `HTTP ${res.status}` };
-  }
-}
-
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeToggle.textContent = theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
@@ -65,19 +41,6 @@ function setActiveChip(sportKey, selectedLabel) {
   }
 }
 
-function updateLolStreamButton(sportState, match) {
-  if (!sportState || !sportState.streamRow || !sportState.streamBtn) return;
-  const url = typeof match?.streamUrl === 'string' ? match.streamUrl.trim() : '';
-  if (url) {
-    sportState.streamRow.hidden = false;
-    sportState.streamBtn.disabled = false;
-    sportState.streamBtn.dataset.url = url;
-  } else {
-    sportState.streamBtn.dataset.url = '';
-    sportState.streamBtn.disabled = true;
-  }
-}
-
 function clearPolling(sportState) {
   if (sportState.pollTimer) {
     clearInterval(sportState.pollTimer);
@@ -93,8 +56,7 @@ function renderTrackedMatch(sportKey, data) {
     renderTeam(sportState.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(sportState.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
     sportState.statusEl.textContent = data.status;
-    const startText = formatPacificTime(data.startTime);
-    sportState.clockEl.textContent = `${data.clock} • ${startText} • ${data.gameId}`;
+    sportState.clockEl.textContent = `${data.clock} • ${data.gameId}`;
     return;
   }
 
@@ -103,7 +65,7 @@ function renderTrackedMatch(sportKey, data) {
   renderTeam(sportState.awayEl, awayName, '', parsedScores[0] || '-');
   renderTeam(sportState.homeEl, homeName, '', parsedScores[1] || '-');
   sportState.statusEl.textContent = `${data.league || ''} • ${data.status || ''}`;
-  sportState.clockEl.textContent = `${formatPacificTime(data.startTime)} • ${data.matchId || ''}`;
+  sportState.clockEl.textContent = `${data.startTime || 'TBD'} • ${data.matchId || ''}`;
 }
 
 async function fetchTrack(sportKey, query, { silent = false } = {}) {
@@ -112,19 +74,18 @@ async function fetchTrack(sportKey, query, { silent = false } = {}) {
 
   try {
     const res = await fetch(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
-    const payload = await safeJson(res);
+    const payload = await res.json();
 
     if (!res.ok) {
       if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
-      if (payload.warning) sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
+      if (payload.warning) sportState.helpEl.textContent = payload.warning;
       return;
     }
 
     renderTrackedMatch(sportKey, payload.match);
-    if (sportKey === 'lol') updateLolStreamButton(sportState, payload.match);
     if (payload.warning) {
-      sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
-    } else {
+      sportState.helpEl.textContent = payload.warning;
+    } else if (!sportState.helpEl.textContent.startsWith('Upcoming in next 12 hours:')) {
       sportState.helpEl.textContent = 'Upcoming in next 12 hours:';
     }
     sportState.errorEl.textContent = '';
@@ -142,7 +103,6 @@ function startTracking(sportKey, query) {
   sportState.scoreEl.hidden = false;
   sportState.statusEl.textContent = 'Loading…';
   sportState.clockEl.textContent = '';
-  if (sportKey === 'lol') updateLolStreamButton(sportState, null);
 
   setActiveChip(sportKey, query);
 
@@ -150,11 +110,6 @@ function startTracking(sportKey, query) {
   sportState.pollTimer = setInterval(() => {
     fetchTrack(sportKey, sportState.currentQuery, { silent: true });
   }, TRACK_POLL_MS);
-}
-
-
-function gameIdentity(game) {
-  return String(game.matchId || game.gameId || game.label || '').trim();
 }
 
 function buildChip(sportKey, game) {
@@ -177,7 +132,7 @@ async function loadSportData(sportKey) {
 
   try {
     const res = await fetch(`/api/games?sport=${encodeURIComponent(sportKey)}`);
-    const data = await safeJson(res);
+    const data = await res.json();
 
     if (!res.ok) {
       sportState.helpEl.textContent = data.error || 'Could not load matches for this sport.';
@@ -203,19 +158,13 @@ async function loadSportData(sportKey) {
       sportState.upcomingEl.appendChild(none);
     }
 
-    const upcomingIds = new Set(upcoming.map(gameIdentity));
-    const top = data.games.filter((game) => !upcomingIds.has(gameIdentity(game))).slice(0, 20);
+    const top = data.games.slice(0, 20);
+    for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
 
-    if (top.length) {
-      for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
-      sportState.input.value = top[0].label;
-      startTracking(sportKey, top[0].label);
-    } else if (upcoming.length) {
-      sportState.input.value = upcoming[0].label;
-      startTracking(sportKey, upcoming[0].label);
-    }
+    sportState.input.value = top[0].label;
+    startTracking(sportKey, top[0].label);
   } catch {
-    sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
+    sportState.helpEl.textContent = 'Could not load matches right now. Retrying will use fallback data when available.';
   }
 }
 
@@ -229,23 +178,12 @@ function mountSportSection(sport) {
   const helpEl = root.querySelector('[data-help]');
   const upcomingEl = root.querySelector('[data-upcoming]');
   const allEl = root.querySelector('[data-all]');
-  const streamRow = root.querySelector('[data-stream-row]');
-  const streamBtn = root.querySelector('[data-stream-btn]');
   const scoreEl = root.querySelector('[data-score]');
   const awayEl = root.querySelector('[data-away]');
   const homeEl = root.querySelector('[data-home]');
   const statusEl = root.querySelector('[data-status]');
   const clockEl = root.querySelector('[data-clock]');
   const errorEl = root.querySelector('[data-error]');
-
-  if (sport.key === 'lol') {
-    streamRow.hidden = false;
-    streamBtn.disabled = true;
-    streamBtn.addEventListener('click', () => {
-      const url = streamBtn.dataset.url;
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    });
-  }
 
   state.set(sport.key, {
     root,
@@ -254,8 +192,6 @@ function mountSportSection(sport) {
     helpEl,
     upcomingEl,
     allEl,
-    streamRow,
-    streamBtn,
     scoreEl,
     awayEl,
     homeEl,
@@ -284,5 +220,7 @@ themeToggle.addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', () => {
-  for (const sportState of state.values()) clearPolling(sportState);
+  for (const sportState of state.values()) {
+    clearPolling(sportState);
+  }
 });
