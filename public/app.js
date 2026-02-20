@@ -88,7 +88,11 @@ function renderTrackedMatch(sportKey, data) {
     renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(ss.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
     ss.statusEl.textContent = data.status;
-    ss.clockEl.textContent  = `${data.clock} ${BULLET} ${formatPacificTime(data.startTime)} ${BULLET} ${data.gameId}`;
+
+    // If live/active, don't show the start time, just the clock
+    const isLive = isLiveStatus(data.status) || /Q\d|OT|Half/i.test(data.clock);
+    const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
+    ss.clockEl.textContent  = `${data.clock}${timeInfo}`;
     return;
   }
 
@@ -172,6 +176,10 @@ async function loadSportData(sportKey) {
     ss.upcomingEl.innerHTML = '';
     ss.allEl.innerHTML      = '';
 
+    if (ss.refreshTimeEl) {
+        ss.refreshTimeEl.textContent = `Refreshed: ${new Date().toLocaleTimeString()}`;
+    }
+
     // Separate: live | upcoming (not live) | rest
     const liveGames     = data.games.filter((g) => isLiveStatus(g.status));
     const upcomingGames = (data.upcoming || []).filter((g) => !isLiveStatus(g.status));
@@ -231,6 +239,7 @@ function mountSportSection(sport) {
   const statusEl     = root.querySelector('[data-status]');
   const clockEl      = root.querySelector('[data-clock]');
   const errorEl      = root.querySelector('[data-error]');
+  const refreshTimeEl = root.querySelector('[data-refresh-time]');
 
   if (sport.key === 'lol') {
     streamRow.hidden   = false;
@@ -244,7 +253,7 @@ function mountSportSection(sport) {
   state.set(sport.key, {
     root, form, input, helpEl, liveHeaderEl, liveEl,
     upcomingEl, allEl, streamRow, streamBtn,
-    scoreEl, awayEl, homeEl, statusEl, clockEl, errorEl,
+    scoreEl, awayEl, homeEl, statusEl, clockEl, errorEl, refreshTimeEl,
     pollTimer: null, currentQuery: ''
   });
 
