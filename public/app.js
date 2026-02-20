@@ -13,30 +13,6 @@ const themeToggle = document.querySelector('#theme-toggle');
 
 const state = new Map();
 
-function formatPacificTime(isoValue) {
-  if (!isoValue) return 'TBD';
-  const date = new Date(isoValue);
-  if (Number.isNaN(date.getTime())) return String(isoValue);
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'America/Los_Angeles'
-  }).format(date);
-  return `${formatted} PST (GMT-8)`;
-}
-
-async function safeJson(res) {
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text?.slice(0, 180) || `HTTP ${res.status}` };
-  }
-}
-
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeToggle.textContent = theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
@@ -65,6 +41,7 @@ function setActiveChip(sportKey, selectedLabel) {
   }
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
 function updateLolStreamButton(sportState, match) {
   if (!sportState || !sportState.streamRow || !sportState.streamBtn) return;
   const url = typeof match?.streamUrl === 'string' ? match.streamUrl.trim() : '';
@@ -78,6 +55,8 @@ function updateLolStreamButton(sportState, match) {
   }
 }
 
+=======
+>>>>>>> main
 function clearPolling(sportState) {
   if (sportState.pollTimer) {
     clearInterval(sportState.pollTimer);
@@ -93,8 +72,12 @@ function renderTrackedMatch(sportKey, data) {
     renderTeam(sportState.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(sportState.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
     sportState.statusEl.textContent = data.status;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const startText = formatPacificTime(data.startTime);
     sportState.clockEl.textContent = `${data.clock} • ${startText} • ${data.gameId}`;
+=======
+    sportState.clockEl.textContent = `${data.clock} • ${data.gameId}`;
+>>>>>>> main
     return;
   }
 
@@ -103,7 +86,11 @@ function renderTrackedMatch(sportKey, data) {
   renderTeam(sportState.awayEl, awayName, '', parsedScores[0] || '-');
   renderTeam(sportState.homeEl, homeName, '', parsedScores[1] || '-');
   sportState.statusEl.textContent = `${data.league || ''} • ${data.status || ''}`;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   sportState.clockEl.textContent = `${formatPacificTime(data.startTime)} • ${data.matchId || ''}`;
+=======
+  sportState.clockEl.textContent = `${data.startTime || 'TBD'} • ${data.matchId || ''}`;
+>>>>>>> main
 }
 
 async function fetchTrack(sportKey, query, { silent = false } = {}) {
@@ -112,19 +99,33 @@ async function fetchTrack(sportKey, query, { silent = false } = {}) {
 
   try {
     const res = await fetch(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const payload = await safeJson(res);
 
     if (!res.ok) {
       if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
       if (payload.warning) sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
+=======
+    const payload = await res.json();
+
+    if (!res.ok) {
+      if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
+      if (payload.warning) sportState.helpEl.textContent = payload.warning;
+>>>>>>> main
       return;
     }
 
     renderTrackedMatch(sportKey, payload.match);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     if (sportKey === 'lol') updateLolStreamButton(sportState, payload.match);
     if (payload.warning) {
       sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
     } else {
+=======
+    if (payload.warning) {
+      sportState.helpEl.textContent = payload.warning;
+    } else if (!sportState.helpEl.textContent.startsWith('Upcoming in next 12 hours:')) {
+>>>>>>> main
       sportState.helpEl.textContent = 'Upcoming in next 12 hours:';
     }
     sportState.errorEl.textContent = '';
@@ -142,7 +143,10 @@ function startTracking(sportKey, query) {
   sportState.scoreEl.hidden = false;
   sportState.statusEl.textContent = 'Loading…';
   sportState.clockEl.textContent = '';
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   if (sportKey === 'lol') updateLolStreamButton(sportState, null);
+=======
+>>>>>>> main
 
   setActiveChip(sportKey, query);
 
@@ -152,17 +156,24 @@ function startTracking(sportKey, query) {
   }, TRACK_POLL_MS);
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
 
 function gameIdentity(game) {
   return String(game.matchId || game.gameId || game.label || '').trim();
 }
 
+=======
+>>>>>>> main
 function buildChip(sportKey, game) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'game-chip';
   btn.dataset.label = game.label;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   btn.textContent = `${game.label} • ${game.status} • ${formatPacificTime(game.startTime)}`;
+=======
+  btn.textContent = `${game.label} • ${game.status}`;
+>>>>>>> main
   btn.addEventListener('click', () => {
     const sportState = state.get(sportKey);
     sportState.input.value = game.label;
@@ -177,7 +188,11 @@ async function loadSportData(sportKey) {
 
   try {
     const res = await fetch(`/api/games?sport=${encodeURIComponent(sportKey)}`);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const data = await safeJson(res);
+=======
+    const data = await res.json();
+>>>>>>> main
 
     if (!res.ok) {
       sportState.helpEl.textContent = data.error || 'Could not load matches for this sport.';
@@ -203,6 +218,7 @@ async function loadSportData(sportKey) {
       sportState.upcomingEl.appendChild(none);
     }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const upcomingIds = new Set(upcoming.map(gameIdentity));
     const top = data.games.filter((game) => !upcomingIds.has(gameIdentity(game))).slice(0, 20);
 
@@ -216,6 +232,15 @@ async function loadSportData(sportKey) {
     }
   } catch {
     sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
+=======
+    const top = data.games.slice(0, 20);
+    for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
+
+    sportState.input.value = top[0].label;
+    startTracking(sportKey, top[0].label);
+  } catch {
+    sportState.helpEl.textContent = 'Could not load matches right now. Retrying will use fallback data when available.';
+>>>>>>> main
   }
 }
 
@@ -229,8 +254,11 @@ function mountSportSection(sport) {
   const helpEl = root.querySelector('[data-help]');
   const upcomingEl = root.querySelector('[data-upcoming]');
   const allEl = root.querySelector('[data-all]');
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   const streamRow = root.querySelector('[data-stream-row]');
   const streamBtn = root.querySelector('[data-stream-btn]');
+=======
+>>>>>>> main
   const scoreEl = root.querySelector('[data-score]');
   const awayEl = root.querySelector('[data-away]');
   const homeEl = root.querySelector('[data-home]');
@@ -238,6 +266,7 @@ function mountSportSection(sport) {
   const clockEl = root.querySelector('[data-clock]');
   const errorEl = root.querySelector('[data-error]');
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   if (sport.key === 'lol') {
     streamRow.hidden = false;
     streamBtn.disabled = true;
@@ -247,6 +276,8 @@ function mountSportSection(sport) {
     });
   }
 
+=======
+>>>>>>> main
   state.set(sport.key, {
     root,
     form,
@@ -254,8 +285,11 @@ function mountSportSection(sport) {
     helpEl,
     upcomingEl,
     allEl,
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     streamRow,
     streamBtn,
+=======
+>>>>>>> main
     scoreEl,
     awayEl,
     homeEl,
@@ -284,5 +318,11 @@ themeToggle.addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', () => {
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   for (const sportState of state.values()) clearPolling(sportState);
+=======
+  for (const sportState of state.values()) {
+    clearPolling(sportState);
+  }
+>>>>>>> main
 });
