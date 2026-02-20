@@ -23,6 +23,8 @@ This app now uses **HTTP polling** (`/api/track`) for live updates instead of re
 ## Features
 
 - Polling-based updates optimized for serverless hosts.
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+=======
 - Fast polling-based updates optimized for serverless hosts.
 >>>>>>> main
 - Light mode by default with a dark-mode toggle.
@@ -41,6 +43,8 @@ Open http://localhost:3000.
 
 - `GET /api/games?sport=nba|lol|csgo|valorant` — list and upcoming matches (`warning` included when fallback is active).
 - `GET /api/track?sport=nba|lol|csgo|valorant&query=<text>` — current tracked match snapshot.
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+=======
 - `GET /api/games?sport=nba|lol|csgo|valorant` — list and upcoming matches.
 - `GET /api/track?sport=nba|lol|csgo|valorant&query=<text>` — current tracked match snapshot (poll this endpoint).
 >>>>>>> main
@@ -49,6 +53,8 @@ Open http://localhost:3000.
 ## Polymarket monitor script
 
 A standalone script is included at `polymarket_monitor.py`.
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+=======
 A standalone script is included at `polymarket_monitor.py` with merge conflicts resolved and duplicate-threshold handling fixed.
 >>>>>>> main
 

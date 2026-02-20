@@ -41,6 +41,7 @@ function setActiveChip(sportKey, selectedLabel) {
   }
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
 function updateLolStreamButton(sportState, match) {
   if (!sportState || !sportState.streamRow || !sportState.streamBtn) return;
   const url = typeof match?.streamUrl === 'string' ? match.streamUrl.trim() : '';
@@ -54,6 +55,7 @@ function updateLolStreamButton(sportState, match) {
   }
 }
 
+=======
 >>>>>>> main
 function clearPolling(sportState) {
   if (sportState.pollTimer) {
@@ -70,6 +72,10 @@ function renderTrackedMatch(sportKey, data) {
     renderTeam(sportState.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(sportState.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
     sportState.statusEl.textContent = data.status;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+    const startText = formatPacificTime(data.startTime);
+    sportState.clockEl.textContent = `${data.clock} • ${startText} • ${data.gameId}`;
+=======
     sportState.clockEl.textContent = `${data.clock} • ${data.gameId}`;
 >>>>>>> main
     return;
@@ -80,6 +86,9 @@ function renderTrackedMatch(sportKey, data) {
   renderTeam(sportState.awayEl, awayName, '', parsedScores[0] || '-');
   renderTeam(sportState.homeEl, homeName, '', parsedScores[1] || '-');
   sportState.statusEl.textContent = `${data.league || ''} • ${data.status || ''}`;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+  sportState.clockEl.textContent = `${formatPacificTime(data.startTime)} • ${data.matchId || ''}`;
+=======
   sportState.clockEl.textContent = `${data.startTime || 'TBD'} • ${data.matchId || ''}`;
 >>>>>>> main
 }
@@ -90,11 +99,13 @@ async function fetchTrack(sportKey, query, { silent = false } = {}) {
 
   try {
     const res = await fetch(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const payload = await safeJson(res);
 
     if (!res.ok) {
       if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
       if (payload.warning) sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
+=======
     const payload = await res.json();
 
     if (!res.ok) {
@@ -105,10 +116,12 @@ async function fetchTrack(sportKey, query, { silent = false } = {}) {
     }
 
     renderTrackedMatch(sportKey, payload.match);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     if (sportKey === 'lol') updateLolStreamButton(sportState, payload.match);
     if (payload.warning) {
       sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
     } else {
+=======
     if (payload.warning) {
       sportState.helpEl.textContent = payload.warning;
     } else if (!sportState.helpEl.textContent.startsWith('Upcoming in next 12 hours:')) {
@@ -130,6 +143,9 @@ function startTracking(sportKey, query) {
   sportState.scoreEl.hidden = false;
   sportState.statusEl.textContent = 'Loading…';
   sportState.clockEl.textContent = '';
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+  if (sportKey === 'lol') updateLolStreamButton(sportState, null);
+=======
 >>>>>>> main
 
   setActiveChip(sportKey, query);
@@ -140,17 +156,22 @@ function startTracking(sportKey, query) {
   }, TRACK_POLL_MS);
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
 
 function gameIdentity(game) {
   return String(game.matchId || game.gameId || game.label || '').trim();
 }
 
+=======
 >>>>>>> main
 function buildChip(sportKey, game) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'game-chip';
   btn.dataset.label = game.label;
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+  btn.textContent = `${game.label} • ${game.status} • ${formatPacificTime(game.startTime)}`;
+=======
   btn.textContent = `${game.label} • ${game.status}`;
 >>>>>>> main
   btn.addEventListener('click', () => {
@@ -167,6 +188,9 @@ async function loadSportData(sportKey) {
 
   try {
     const res = await fetch(`/api/games?sport=${encodeURIComponent(sportKey)}`);
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+    const data = await safeJson(res);
+=======
     const data = await res.json();
 >>>>>>> main
 
@@ -194,6 +218,7 @@ async function loadSportData(sportKey) {
       sportState.upcomingEl.appendChild(none);
     }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
     const upcomingIds = new Set(upcoming.map(gameIdentity));
     const top = data.games.filter((game) => !upcomingIds.has(gameIdentity(game))).slice(0, 20);
 
@@ -207,6 +232,7 @@ async function loadSportData(sportKey) {
     }
   } catch {
     sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
+=======
     const top = data.games.slice(0, 20);
     for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
 
@@ -228,6 +254,10 @@ function mountSportSection(sport) {
   const helpEl = root.querySelector('[data-help]');
   const upcomingEl = root.querySelector('[data-upcoming]');
   const allEl = root.querySelector('[data-all]');
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+  const streamRow = root.querySelector('[data-stream-row]');
+  const streamBtn = root.querySelector('[data-stream-btn]');
+=======
 >>>>>>> main
   const scoreEl = root.querySelector('[data-score]');
   const awayEl = root.querySelector('[data-away]');
@@ -236,6 +266,7 @@ function mountSportSection(sport) {
   const clockEl = root.querySelector('[data-clock]');
   const errorEl = root.querySelector('[data-error]');
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
   if (sport.key === 'lol') {
     streamRow.hidden = false;
     streamBtn.disabled = true;
@@ -245,6 +276,7 @@ function mountSportSection(sport) {
     });
   }
 
+=======
 >>>>>>> main
   state.set(sport.key, {
     root,
@@ -253,6 +285,10 @@ function mountSportSection(sport) {
     helpEl,
     upcomingEl,
     allEl,
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+    streamRow,
+    streamBtn,
+=======
 >>>>>>> main
     scoreEl,
     awayEl,
@@ -282,6 +318,9 @@ themeToggle.addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', () => {
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+  for (const sportState of state.values()) clearPolling(sportState);
+=======
   for (const sportState of state.values()) {
     clearPolling(sportState);
   }
