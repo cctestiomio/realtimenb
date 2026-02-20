@@ -137,6 +137,11 @@ function startTracking(sportKey, query) {
   }, TRACK_POLL_MS);
 }
 
+
+function gameIdentity(game) {
+  return String(game.matchId || game.gameId || game.label || '').trim();
+}
+
 function buildChip(sportKey, game) {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -183,11 +188,17 @@ async function loadSportData(sportKey) {
       sportState.upcomingEl.appendChild(none);
     }
 
-    const top = data.games.slice(0, 20);
-    for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
+    const upcomingIds = new Set(upcoming.map(gameIdentity));
+    const top = data.games.filter((game) => !upcomingIds.has(gameIdentity(game))).slice(0, 20);
 
-    sportState.input.value = top[0].label;
-    startTracking(sportKey, top[0].label);
+    if (top.length) {
+      for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
+      sportState.input.value = top[0].label;
+      startTracking(sportKey, top[0].label);
+    } else if (upcoming.length) {
+      sportState.input.value = upcoming[0].label;
+      startTracking(sportKey, upcoming[0].label);
+    }
   } catch {
     sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
   }
