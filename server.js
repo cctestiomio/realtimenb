@@ -18,6 +18,8 @@ const MIME = {
   '.json': 'application/json; charset=utf-8'
 };
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
+=======
 const NBA_URL = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json';
 const NBA_FALLBACK_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard';
 const LOL_URL = 'https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US&leagueId=98767991310872058';
@@ -314,6 +316,7 @@ async function serveStatic(res, pathname) {
   }
 }
 
+<<<<<<< codex/build-real-time-nba-score-website-zshsjr
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -349,6 +352,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/stream') {
     return sendJson(res, 410, { error: 'SSE stream is disabled. Use /api/track polling endpoint.' });
+=======
 function getProvider(url, res) {
   const sport = String(url.searchParams.get('sport') || 'nba').toLowerCase();
   const provider = PROVIDERS[sport];
