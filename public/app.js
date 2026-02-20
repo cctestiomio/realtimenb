@@ -93,11 +93,12 @@ function renderTrackedMatch(sportKey, data) {
   }
 
   const parts = String(data.label || 'TBD vs TBD').split(/\s+vs\s+/i);
-  const [s1, s2] = String(data.score || '').split('-');
+  let [s1, s2] = String(data.score || '').split('|');
+  if (s2 === undefined) [s1, s2] = String(data.score || '').split('-');
   renderTeam(ss.awayEl, parts[0] || 'TBD', '', s1 || '-');
   renderTeam(ss.homeEl, parts[1] || 'TBD', '', s2 || '-');
   ss.statusEl.textContent = `${data.league || ''} ${BULLET} ${data.status || ''}`;
-  ss.clockEl.textContent  = `${formatPacificTime(data.startTime)} ${BULLET} ${data.matchId || ''}`;
+  ss.clockEl.textContent  = `${data.clock || formatPacificTime(data.startTime)} ${BULLET} ${data.matchId || ''}`;
 }
 
 // â”€â”€ Fetch + Poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
