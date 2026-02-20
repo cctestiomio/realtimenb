@@ -86,5 +86,30 @@
         if (url) window.open(url, '_blank');
       });
     </script>
-</body>
+    <script id="twitch-injector">
+      document.addEventListener('click', (e) => {
+        const isLiveList = e.target.closest('[data-live] > *');
+        const isTrackerCard = e.target.closest('[data-score]');
+        
+        if (isLiveList || isTrackerCard) {
+           const section = e.target.closest('[data-sport-card]');
+           if (!section) return;
+           
+           const title = (section.querySelector('[data-title]')?.textContent || '').toLowerCase();
+           let url = '';
+           
+           if (title.includes('lol') || title.includes('league')) {
+              url = 'https://www.twitch.tv/directory/category/league-of-legends';
+           } else if (title.includes('valorant')) {
+              url = 'https://www.twitch.tv/directory/category/valorant';
+           } else if (title.includes('cs2') || title.includes('csgo') || title.includes('counter-strike')) {
+              url = 'https://www.twitch.tv/directory/category/counter-strike-2';
+           }
+           
+           if (url) window.open(url, '_blank', 'noopener,noreferrer');
+        }
+      });
+    </script>
+    </body>
 </html>
+
