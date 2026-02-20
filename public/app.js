@@ -1,257 +1,238 @@
+// public/app.js
+// All special characters use \uXXXX escapes for encoding safety.
+
 const sports = [
-  { key: 'nba', label: 'NBA' },
-  { key: 'lol', label: 'League of Legends Esports' },
-  { key: 'csgo', label: 'CS2 / CSGO Esports' },
+  { key: 'nba',      label: 'NBA' },
+  { key: 'lol',      label: 'League of Legends Esports' },
+  { key: 'csgo',     label: 'CS2 / CSGO Esports' },
   { key: 'valorant', label: 'VALORANT Esports' }
 ];
 
-const TRACK_POLL_MS = 1000;
-const REQUEST_TIMEOUT_MS = 6000;
+const TRACK_POLL_MS      = 1000;
+const REQUEST_TIMEOUT_MS = 8000;
+const BULLET             = '\u2022';
 
 const sectionsRoot = document.querySelector('#sections');
-const template = document.querySelector('#sport-template');
-const themeToggle = document.querySelector('#theme-toggle');
+const template     = document.querySelector('#sport-template');
+const themeToggle  = document.querySelector('#theme-toggle');
 
 const state = new Map();
 
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const isLiveStatus = (s = '') => /\b(live|inprogress|in.?progress|ongoing)\b/i.test(s);
+
 function formatPacificTime(isoValue) {
   if (!isoValue) return 'TBD';
-  const date = new Date(isoValue);
-  if (Number.isNaN(date.getTime())) return String(isoValue);
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
+  let date;
+  try { date = new Date(isoValue); } catch { return 'TBD'; }
+  if (!date || Number.isNaN(date.getTime())) return 'TBD';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
     timeZone: 'America/Los_Angeles'
-  }).format(date);
-  return `${formatted} PST (GMT-8)`;
+  }).format(date) + ' PT';
 }
 
-
-async function fetchWithTimeout(url, timeoutMs = REQUEST_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+async function fetchWithTimeout(url, ms = REQUEST_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const t    = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
 }
 
 async function safeJson(res) {
   const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text?.slice(0, 180) || `HTTP ${res.status}` };
-  }
+  try { return JSON.parse(text); }
+  catch { return { error: text?.slice(0, 180) || `HTTP ${res.status}` }; }
 }
 
+// â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  themeToggle.textContent = theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
+  themeToggle.textContent = theme === 'dark'
+    ? '\u2600\uFE0F Light mode'
+    : '\uD83C\uDF19 Dark mode';
   localStorage.setItem('theme', theme);
 }
+function initTheme() { setTheme(localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'); }
 
-function initTheme() {
-  const saved = localStorage.getItem('theme');
-  setTheme(saved === 'dark' ? 'dark' : 'light');
-}
-
+// â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function renderTeam(container, name, code, score) {
-  container.innerHTML = `
-    <div class="abbr">${code || ''}</div>
-    <div>${name || 'TBD'}</div>
-    <div class="score">${score ?? '-'}</div>
-  `;
+  container.innerHTML = `<div class="abbr">${code || ''}</div><div>${name || 'TBD'}</div><div class="score">${score ?? '-'}</div>`;
 }
 
-function setActiveChip(sportKey, selectedLabel) {
-  const sportState = state.get(sportKey);
-  if (!sportState) return;
-  const chips = sportState.root.querySelectorAll('.game-chip');
-  for (const chip of chips) {
-    chip.classList.toggle('active', chip.dataset.label === selectedLabel);
-  }
+function setActiveChip(sportKey, label) {
+  const ss = state.get(sportKey);
+  if (!ss) return;
+  for (const chip of ss.root.querySelectorAll('.game-chip'))
+    chip.classList.toggle('active', chip.dataset.label === label);
 }
 
-function updateLolStreamButton(sportState, match) {
-  if (!sportState || !sportState.streamRow || !sportState.streamBtn) return;
+function updateLolStreamButton(ss, match) {
+  if (!ss?.streamRow || !ss?.streamBtn) return;
   const url = typeof match?.streamUrl === 'string' ? match.streamUrl.trim() : '';
-  if (url) {
-    sportState.streamRow.hidden = false;
-    sportState.streamBtn.disabled = false;
-    sportState.streamBtn.dataset.url = url;
-  } else {
-    sportState.streamBtn.dataset.url = '';
-    sportState.streamBtn.disabled = true;
-  }
+  ss.streamRow.hidden   = !url;
+  ss.streamBtn.disabled = !url;
+  ss.streamBtn.dataset.url = url;
 }
 
-function clearPolling(sportState) {
-  if (sportState.pollTimer) {
-    clearInterval(sportState.pollTimer);
-    sportState.pollTimer = null;
-  }
+function clearPolling(ss) {
+  if (ss.pollTimer) { clearInterval(ss.pollTimer); ss.pollTimer = null; }
 }
 
 function renderTrackedMatch(sportKey, data) {
-  const sportState = state.get(sportKey);
-  if (!sportState) return;
+  const ss = state.get(sportKey);
+  if (!ss) return;
 
   if (sportKey === 'nba') {
-    renderTeam(sportState.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
-    renderTeam(sportState.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
-    sportState.statusEl.textContent = data.status;
-    const startText = formatPacificTime(data.startTime);
-    sportState.clockEl.textContent = `${data.clock} • ${startText} • ${data.gameId}`;
+    renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
+    renderTeam(ss.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
+    ss.statusEl.textContent = data.status;
+    ss.clockEl.textContent  = `${data.clock} ${BULLET} ${formatPacificTime(data.startTime)} ${BULLET} ${data.gameId}`;
     return;
   }
 
-  const [awayName, homeName] = String(data.label || 'TBD vs TBD').split(/\s+vs\s+/i);
-  const parsedScores = String(data.score || '').split('-');
-  renderTeam(sportState.awayEl, awayName, '', parsedScores[0] || '-');
-  renderTeam(sportState.homeEl, homeName, '', parsedScores[1] || '-');
-  sportState.statusEl.textContent = `${data.league || ''} • ${data.status || ''}`;
-  sportState.clockEl.textContent = `${formatPacificTime(data.startTime)} • ${data.matchId || ''}`;
+  const parts = String(data.label || 'TBD vs TBD').split(/\s+vs\s+/i);
+  const [s1, s2] = String(data.score || '').split('-');
+  renderTeam(ss.awayEl, parts[0] || 'TBD', '', s1 || '-');
+  renderTeam(ss.homeEl, parts[1] || 'TBD', '', s2 || '-');
+  ss.statusEl.textContent = `${data.league || ''} ${BULLET} ${data.status || ''}`;
+  ss.clockEl.textContent  = `${formatPacificTime(data.startTime)} ${BULLET} ${data.matchId || ''}`;
 }
 
-async function fetchTrack(sportKey, query, { silent = false } = {}) {
-  const sportState = state.get(sportKey);
-  if (!sportState) return;
-
+// â”€â”€ Fetch + Poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+async function fetchTrack(sportKey, query, silent = false) {
+  const ss = state.get(sportKey);
+  if (!ss) return;
   try {
-    const res = await fetchWithTimeout(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
+    const res     = await fetchWithTimeout(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
     const payload = await safeJson(res);
-
     if (!res.ok) {
-      if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
-      if (payload.warning) sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
+      if (!silent) ss.errorEl.textContent = payload.error || 'Could not track game.';
+      if (payload.warning) ss.helpEl.textContent = `Fallback: ${payload.warning}`;
       return;
     }
-
     renderTrackedMatch(sportKey, payload.match);
-    if (sportKey === 'lol') updateLolStreamButton(sportState, payload.match);
-    if (payload.warning) {
-      sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
-    } else {
-      sportState.helpEl.textContent = 'Upcoming in next 12 hours:';
-    }
-    sportState.errorEl.textContent = '';
+    if (sportKey === 'lol') updateLolStreamButton(ss, payload.match);
+    ss.helpEl.textContent  = payload.warning ? `Fallback: ${payload.warning}` : 'Upcoming in next 12 hours:';
+    ss.errorEl.textContent = '';
   } catch {
-    if (!silent) sportState.errorEl.textContent = 'Could not reach tracking endpoint. Please retry.';
+    if (!silent) ss.errorEl.textContent = 'Could not reach tracking endpoint.';
   }
 }
 
 function startTracking(sportKey, query) {
-  const sportState = state.get(sportKey);
-  if (!sportState) return;
-
-  clearPolling(sportState);
-  sportState.currentQuery = query;
-  sportState.scoreEl.hidden = false;
-  sportState.statusEl.textContent = 'Loading…';
-  sportState.clockEl.textContent = '';
-  if (sportKey === 'lol') updateLolStreamButton(sportState, null);
-
+  const ss = state.get(sportKey);
+  if (!ss) return;
+  clearPolling(ss);
+  ss.currentQuery         = query;
+  ss.scoreEl.hidden       = false;
+  ss.statusEl.textContent = 'Loading\u2026';
+  ss.clockEl.textContent  = '';
+  if (sportKey === 'lol') updateLolStreamButton(ss, null);
   setActiveChip(sportKey, query);
-
-  fetchTrack(sportKey, query);
-  sportState.pollTimer = setInterval(() => {
-    fetchTrack(sportKey, sportState.currentQuery, { silent: true });
-  }, TRACK_POLL_MS);
+  fetchTrack(sportKey, query, false);
+  ss.pollTimer = setInterval(() => fetchTrack(sportKey, ss.currentQuery, true), TRACK_POLL_MS);
 }
 
-
-function gameIdentity(game) {
-  return String(game.matchId || game.gameId || game.label || '').trim();
-}
+// â”€â”€ Chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const gameIdentity = (g) => String(g.matchId || g.gameId || g.label || '').trim();
 
 function buildChip(sportKey, game) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'game-chip';
+  const live = isLiveStatus(game.status);
+  const btn  = document.createElement('button');
+  btn.type      = 'button';
+  btn.className = `game-chip${live ? ' chip-live' : ''}`;
   btn.dataset.label = game.label;
-  btn.textContent = `${game.label} • ${game.status} • ${formatPacificTime(game.startTime)}`;
+  const timeStr = live ? 'LIVE' : formatPacificTime(game.startTime);
+  btn.textContent = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
   btn.addEventListener('click', () => {
-    const sportState = state.get(sportKey);
-    sportState.input.value = game.label;
+    const ss = state.get(sportKey);
+    if (ss) ss.input.value = game.label;
     startTracking(sportKey, game.label);
   });
   return btn;
 }
 
+// â”€â”€ Load sport data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function loadSportData(sportKey) {
-  const sportState = state.get(sportKey);
-  if (!sportState) return;
-
+  const ss = state.get(sportKey);
+  if (!ss) return;
   try {
-    const res = await fetchWithTimeout(`/api/games?sport=${encodeURIComponent(sportKey)}`);
+    const res  = await fetchWithTimeout(`/api/games?sport=${encodeURIComponent(sportKey)}`);
     const data = await safeJson(res);
 
-    if (!res.ok) {
-      sportState.helpEl.textContent = data.error || 'Could not load matches for this sport.';
-      return;
-    }
+    if (!res.ok) { ss.helpEl.textContent = data.error || 'Could not load matches.'; return; }
+    if (!data.games?.length) { ss.helpEl.textContent = 'No matches found right now.'; return; }
 
-    if (!data.games?.length) {
-      sportState.helpEl.textContent = 'No matches found right now.';
-      return;
-    }
+    ss.helpEl.textContent = data.warning ? `Fallback: ${data.warning}` : 'Upcoming in next 12 hours:';
 
-    sportState.helpEl.textContent = data.warning ? `Using fallback data: ${data.warning}` : 'Upcoming in next 12 hours:';
-    sportState.upcomingEl.innerHTML = '';
-    sportState.allEl.innerHTML = '';
+    ss.liveEl.innerHTML     = '';
+    ss.upcomingEl.innerHTML = '';
+    ss.allEl.innerHTML      = '';
 
-    const upcoming = data.upcoming?.length ? data.upcoming : [];
-    if (upcoming.length) {
-      for (const game of upcoming) sportState.upcomingEl.appendChild(buildChip(sportKey, game));
+    // Separate: live | upcoming (not live) | rest
+    const liveGames     = data.games.filter((g) => isLiveStatus(g.status));
+    const upcomingGames = (data.upcoming || []).filter((g) => !isLiveStatus(g.status));
+    const usedIds       = new Set([...liveGames, ...upcomingGames].map(gameIdentity));
+    const restGames     = data.games.filter((g) => !usedIds.has(gameIdentity(g))).slice(0, 20);
+
+    // Live section
+    if (liveGames.length) {
+      ss.liveHeaderEl.hidden = false;
+      for (const g of liveGames) ss.liveEl.appendChild(buildChip(sportKey, g));
     } else {
-      const none = document.createElement('p');
-      none.className = 'hint';
-      none.textContent = 'No matches scheduled in the next 12 hours.';
-      sportState.upcomingEl.appendChild(none);
+      ss.liveHeaderEl.hidden = true;
     }
 
-    const upcomingIds = new Set(upcoming.map(gameIdentity));
-    const top = data.games.filter((game) => !upcomingIds.has(gameIdentity(game))).slice(0, 20);
+    // Upcoming section
+    if (upcomingGames.length) {
+      for (const g of upcomingGames) ss.upcomingEl.appendChild(buildChip(sportKey, g));
+    } else if (!liveGames.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'No matches scheduled in the next 12 hours.';
+      ss.upcomingEl.appendChild(p);
+    }
 
-    if (top.length) {
-      for (const game of top) sportState.allEl.appendChild(buildChip(sportKey, game));
-      sportState.input.value = top[0].label;
-      startTracking(sportKey, top[0].label);
-    } else if (upcoming.length) {
-      sportState.input.value = upcoming[0].label;
-      startTracking(sportKey, upcoming[0].label);
+    // Scheduled rest
+    for (const g of restGames) ss.allEl.appendChild(buildChip(sportKey, g));
+
+    // Auto-track: live first, then upcoming, then scheduled
+    const autoTrack = liveGames[0] || upcomingGames[0] || restGames[0];
+    if (autoTrack) {
+      ss.input.value = autoTrack.label;
+      startTracking(sportKey, autoTrack.label);
     }
   } catch {
-    sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
+    ss.helpEl.textContent = 'Could not load matches. Check your API routes.';
   }
 }
 
+// â”€â”€ Mount sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function mountSportSection(sport) {
   const node = template.content.cloneNode(true);
   const root = node.querySelector('[data-sport-card]');
   root.querySelector('[data-title]').textContent = sport.label;
 
-  const form = root.querySelector('[data-form]');
-  const input = root.querySelector('[data-input]');
-  const helpEl = root.querySelector('[data-help]');
-  const upcomingEl = root.querySelector('[data-upcoming]');
-  const allEl = root.querySelector('[data-all]');
-  const streamRow = root.querySelector('[data-stream-row]');
-  const streamBtn = root.querySelector('[data-stream-btn]');
-  const scoreEl = root.querySelector('[data-score]');
-  const awayEl = root.querySelector('[data-away]');
-  const homeEl = root.querySelector('[data-home]');
-  const statusEl = root.querySelector('[data-status]');
-  const clockEl = root.querySelector('[data-clock]');
-  const errorEl = root.querySelector('[data-error]');
+  const form         = root.querySelector('[data-form]');
+  const input        = root.querySelector('[data-input]');
+  const helpEl       = root.querySelector('[data-help]');
+  const liveHeaderEl = root.querySelector('[data-live-header]');
+  const liveEl       = root.querySelector('[data-live]');
+  const upcomingEl   = root.querySelector('[data-upcoming]');
+  const allEl        = root.querySelector('[data-all]');
+  const streamRow    = root.querySelector('[data-stream-row]');
+  const streamBtn    = root.querySelector('[data-stream-btn]');
+  const scoreEl      = root.querySelector('[data-score]');
+  const awayEl       = root.querySelector('[data-away]');
+  const homeEl       = root.querySelector('[data-home]');
+  const statusEl     = root.querySelector('[data-status]');
+  const clockEl      = root.querySelector('[data-clock]');
+  const errorEl      = root.querySelector('[data-error]');
 
   if (sport.key === 'lol') {
-    streamRow.hidden = false;
+    streamRow.hidden   = false;
     streamBtn.disabled = true;
     streamBtn.addEventListener('click', () => {
       const url = streamBtn.dataset.url;
@@ -260,29 +241,13 @@ function mountSportSection(sport) {
   }
 
   state.set(sport.key, {
-    root,
-    form,
-    input,
-    helpEl,
-    upcomingEl,
-    allEl,
-    streamRow,
-    streamBtn,
-    scoreEl,
-    awayEl,
-    homeEl,
-    statusEl,
-    clockEl,
-    errorEl,
-    pollTimer: null,
-    currentQuery: ''
+    root, form, input, helpEl, liveHeaderEl, liveEl,
+    upcomingEl, allEl, streamRow, streamBtn,
+    scoreEl, awayEl, homeEl, statusEl, clockEl, errorEl,
+    pollTimer: null, currentQuery: ''
   });
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    startTracking(sport.key, input.value);
-  });
-
+  form.addEventListener('submit', (e) => { e.preventDefault(); startTracking(sport.key, input.value); });
   sectionsRoot.appendChild(root);
 }
 
@@ -291,10 +256,10 @@ for (const sport of sports) loadSportData(sport.key);
 
 initTheme();
 themeToggle.addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme') || 'light';
-  setTheme(current === 'light' ? 'dark' : 'light');
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  setTheme(cur === 'light' ? 'dark' : 'light');
 });
 
 window.addEventListener('beforeunload', () => {
-  for (const sportState of state.values()) clearPolling(sportState);
+  for (const ss of state.values()) clearPolling(ss);
 });
