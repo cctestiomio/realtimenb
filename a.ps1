@@ -1,24 +1,80 @@
-﻿// â”€â”€ lib/providers.js â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+<#
+.SYNOPSIS
+    Applies all fixes to the realtimenb Sports Tracker project.
+
+.DESCRIPTION
+    Run this from the ROOT of your cloned realtimenb repository.
+    It overwrites lib/providers.js and lib/data-cache.js with fixed versions.
+
+    Fixes applied:
+      - LoL 403 errors: hardcoded public API key (no more page-scraping)
+      - LoL live scores: uses the getLive endpoint for real scores
+      - LoL: completed matches are filtered out of the active games list
+      - CS2: stale matches (>4h old, non-live) are pruned; tries two HLTV mirrors
+      - VALORANT: merges live_score + upcoming feeds; shows real scores
+      - Performance: smarter stale-while-revalidate cache (800ms TTL)
+
+.EXAMPLE
+    cd C:\path\to\realtimenb
+    .\apply-fixes.ps1
+#>
+
+param(
+    [string]$RepoRoot = $PSScriptRoot
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Write-Step([string]$msg) {
+    Write-Host ""
+    Write-Host ">>> $msg" -ForegroundColor Cyan
+}
+
+function Ensure-Dir([string]$path) {
+    if (-not (Test-Path $path)) {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+    }
+}
+
+# ── Verify we're in the repo root ─────────────────────────────────────────────
+if (-not (Test-Path (Join-Path $RepoRoot "package.json"))) {
+    Write-Error "Could not find package.json in '$RepoRoot'. Run this script from the repo root."
+    exit 1
+}
+
+$libDir = Join-Path $RepoRoot "lib"
+Ensure-Dir $libDir
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FILE 1 — lib/providers.js
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step "Writing lib/providers.js"
+
+$providersPath = Join-Path $libDir "providers.js"
+
+@'
+// ── lib/providers.js ──────────────────────────────────────────────────────────
 // Fixed: 2025-02
-//  â€¢ LoL: hardcoded public API key â†’ no more 403s
-//  â€¢ LoL: getLive endpoint for real-time scores
-//  â€¢ LoL: completed events filtered out of active list
-//  â€¢ CS2: date-filter stale matches; multi-source fallback
-//  â€¢ VALORANT: merges live_score + upcoming feeds
-//  â€¢ Performance: shorter fetch timeout, parallel fetches
+//  • LoL: hardcoded public API key → no more 403s
+//  • LoL: getLive endpoint for real-time scores
+//  • LoL: completed events filtered out of active list
+//  • CS2: date-filter stale matches; multi-source fallback
+//  • VALORANT: merges live_score + upcoming feeds
+//  • Performance: shorter fetch timeout, parallel fetches
 
 const UPCOMING_WINDOW_MS = 12 * 60 * 60 * 1000;
 const STALE_CUTOFF_MS    = 4 * 60 * 60 * 1000;   // hide matches >4 h old unless live
 const FETCH_TIMEOUT_MS   = 3000;
 
-// â”€â”€ NBA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── NBA ───────────────────────────────────────────────────────────────────────
 const NBA_URL          = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json';
 const NBA_FALLBACK_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard';
 
-// â”€â”€ League of Legends â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── League of Legends ─────────────────────────────────────────────────────────
 // The public community API key for the unofficial LoL esports API.
 // This is the same key embedded in every official Riot esports app and
-// is safe to use client-side â€” not a private secret.
+// is safe to use client-side — not a private secret.
 const LOL_PUBLIC_API_KEY = process.env.LOL_API_KEY || '0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z';
 const LOL_SCHEDULE_URL   = 'https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US';
 const LOL_LIVE_URL       = 'https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US';
@@ -39,18 +95,18 @@ const LOL_TWITCH_BY_REGION = {
   DEFAULT: 'https://www.twitch.tv/riotgames'
 };
 
-// â”€â”€ CS2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── CS2 ───────────────────────────────────────────────────────────────────────
 // Primary + fallback HLTV mirror APIs
 const CS_SOURCES = [
   'https://hltv-api-steel.vercel.app/api/matches',
   'https://hltv-api.vercel.app/api/matches.json',
 ];
 
-// â”€â”€ VALORANT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── VALORANT ──────────────────────────────────────────────────────────────────
 const VAL_LIVE_URL     = 'https://vlrggapi.vercel.app/match?q=live_score';
 const VAL_UPCOMING_URL = 'https://vlrggapi.vercel.app/match?q=upcoming';
 
-// â”€â”€ Team alias map (NBA) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Team alias map (NBA) ──────────────────────────────────────────────────────
 const TEAM_ALIASES = {
   ATL: ['atl','hawks','atlanta'],           BOS: ['bos','celtics','boston'],
   BKN: ['bkn','nets','brooklyn'],           CHA: ['cha','hornets','charlotte'],
@@ -69,7 +125,7 @@ const TEAM_ALIASES = {
   UTA: ['uta','jazz','utah'],               WAS: ['was','wizards','washington']
 };
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const normalize   = (v = '') => String(v).toLowerCase().trim();
 const unique      = (arr) => [...new Set(arr)];
 const parseDate   = (value) => { const t = new Date(value).getTime(); return Number.isFinite(t) ? t : null; };
@@ -126,9 +182,9 @@ async function withDeadline(promise, ms, label) {
   }
 }
 
-// â”€â”€ NBA serialisers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── NBA serialisers ───────────────────────────────────────────────────────────
 const formatClock = (period, clock, fallback) =>
-  `${period > 4 ? `OT${period - 4}` : `Q${period || 1}`} â€¢ ${clock || fallback || 'TBD'}`;
+  `${period > 4 ? `OT${period - 4}` : `Q${period || 1}`} • ${clock || fallback || 'TBD'}`;
 
 function serializeNbaFromCdn(game) {
   return {
@@ -161,8 +217,8 @@ function serializeNbaFromEspn(event) {
 }
 
 const fallbackNbaGames = () => [
-  { gameId: 'demo-nba-1', label: 'BOS @ LAL', status: 'Demo fallback', clock: 'Q1 â€¢ 12:00', home: { code: 'LAL', name: 'Lakers',  city: 'Los Angeles',  score: 0 }, away: { code: 'BOS', name: 'Celtics',  city: 'Boston',       score: 0 }, startTime: futureIso(2), lastUpdated: new Date().toISOString() },
-  { gameId: 'demo-nba-2', label: 'GSW @ DEN', status: 'Demo fallback', clock: 'Q1 â€¢ 12:00', home: { code: 'DEN', name: 'Nuggets',  city: 'Denver',       score: 0 }, away: { code: 'GSW', name: 'Warriors', city: 'Golden State', score: 0 }, startTime: futureIso(4), lastUpdated: new Date().toISOString() }
+  { gameId: 'demo-nba-1', label: 'BOS @ LAL', status: 'Demo fallback', clock: 'Q1 • 12:00', home: { code: 'LAL', name: 'Lakers',  city: 'Los Angeles',  score: 0 }, away: { code: 'BOS', name: 'Celtics',  city: 'Boston',       score: 0 }, startTime: futureIso(2), lastUpdated: new Date().toISOString() },
+  { gameId: 'demo-nba-2', label: 'GSW @ DEN', status: 'Demo fallback', clock: 'Q1 • 12:00', home: { code: 'DEN', name: 'Nuggets',  city: 'Denver',       score: 0 }, away: { code: 'GSW', name: 'Warriors', city: 'Golden State', score: 0 }, startTime: futureIso(4), lastUpdated: new Date().toISOString() }
 ];
 
 function parseQueryTeams(query) {
@@ -189,7 +245,7 @@ function pickNba(games, query) {
   return games.find((g) => normalize(`${g.label} ${g.home.city} ${g.home.name} ${g.away.city} ${g.away.name}`).includes(q)) || null;
 }
 
-// â”€â”€ Esport helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Esport helpers ────────────────────────────────────────────────────────────
 function serializeEsport(item, overrides = {}) {
   return {
     matchId:     String(item.matchId || item.id || item.slug || item.label || 'unknown'),
@@ -225,7 +281,7 @@ function streamForLolLeague(leagueName, fallbackRegion = null) {
   return LOL_TWITCH_BY_REGION[key] || LOL_TWITCH_BY_REGION.DEFAULT;
 }
 
-// â”€â”€ LoL live-score overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── LoL live-score overlay ────────────────────────────────────────────────────
 async function fetchLolLiveScores() {
   try {
     const payload = await withDeadline(
@@ -246,7 +302,7 @@ async function fetchLolLiveScores() {
   }
 }
 
-// â”€â”€ LoL region schedule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── LoL region schedule ───────────────────────────────────────────────────────
 async function fetchLolRegionEvents(region) {
   const events     = [];
   const seenEvents = new Set();
@@ -280,7 +336,7 @@ async function fetchLolRegionEvents(region) {
   return events;
 }
 
-// â”€â”€ NBA provider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── NBA provider ──────────────────────────────────────────────────────────────
 async function getNbaData() {
   const errors = [];
   const tasks = [
@@ -304,7 +360,7 @@ async function getNbaData() {
   };
 }
 
-// â”€â”€ LoL provider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── LoL provider ──────────────────────────────────────────────────────────────
 async function getLolData() {
   const warnings = [];
   const allGames = [];
@@ -378,7 +434,7 @@ async function getLolData() {
   };
 }
 
-// â”€â”€ CS2 provider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── CS2 provider ──────────────────────────────────────────────────────────────
 function extractTeamName(team) {
   if (!team) return null;
   if (typeof team === 'string') return team.trim() || null;
@@ -460,7 +516,7 @@ async function getCsData() {
   };
 }
 
-// â”€â”€ VALORANT provider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── VALORANT provider ─────────────────────────────────────────────────────────
 function mapVlrMatch(item, forceStatus) {
   const score = [item.score1, item.score2].filter((s) => s != null).join('-') || item.score || null;
   return serializeEsport({
@@ -534,7 +590,7 @@ async function getValorantData() {
   };
 }
 
-// â”€â”€ Exports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Exports ───────────────────────────────────────────────────────────────────
 export const PROVIDERS = {
   nba:      { getData: getNbaData,      pick: (data, q) => pickNba(data.games, q) },
   lol:      { getData: getLolData,      pick: (data, q) => pickByQuery(data.games, q) },
@@ -545,3 +601,91 @@ export const PROVIDERS = {
 export function resolveProvider(sport) {
   return PROVIDERS[normalize(sport || 'nba')] || null;
 }
+'@ | Set-Content -Path $providersPath -Encoding UTF8
+
+Write-Host "    OK: $providersPath" -ForegroundColor Green
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FILE 2 — lib/data-cache.js
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step "Writing lib/data-cache.js"
+
+$cachePath = Join-Path $libDir "data-cache.js"
+
+@'
+// lib/data-cache.js — optimised for real-time feel on serverless
+// • 800 ms TTL (fast enough to feel live, low enough to not hammer upstreams)
+// • Stale-while-revalidate: returns cached value immediately while refreshing
+// • Per-sport in-flight deduplication
+
+const DEFAULT_TTL_MS = 800;
+
+const cache = new Map();
+
+export async function getCachedProviderData(sportKey, loader, ttlMs = DEFAULT_TTL_MS) {
+  const now     = Date.now();
+  const current = cache.get(sportKey);
+  const age     = current ? now - current.fetchedAt : Infinity;
+  const fresh   = age <= ttlMs;
+
+  // Fresh hit — serve immediately
+  if (current?.value && fresh) return current.value;
+
+  // In-flight deduplication
+  if (current?.inFlight) {
+    // Return stale value instantly if available; in-flight will update the cache
+    return current.value ?? current.inFlight;
+  }
+
+  // Kick off a new fetch
+  const inFlight = loader()
+    .then((value) => {
+      cache.set(sportKey, { value, fetchedAt: Date.now(), inFlight: null });
+      return value;
+    })
+    .catch((error) => {
+      cache.set(sportKey, {
+        value:     current?.value ?? null,
+        fetchedAt: current?.fetchedAt ?? 0,
+        inFlight:  null
+      });
+      throw error;
+    });
+
+  cache.set(sportKey, {
+    value:     current?.value ?? null,
+    fetchedAt: current?.fetchedAt ?? 0,
+    inFlight
+  });
+
+  // Stale-while-revalidate: return old data immediately; in-flight will update
+  if (current?.value) return current.value;
+
+  // No prior cache at all — must await first load
+  return inFlight;
+}
+'@ | Set-Content -Path $cachePath -Encoding UTF8
+
+Write-Host "    OK: $cachePath" -ForegroundColor Green
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Summary
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Yellow
+Write-Host " All fixes applied successfully!" -ForegroundColor Yellow
+Write-Host "============================================================" -ForegroundColor Yellow
+Write-Host ""
+Write-Host " Changes made:"
+Write-Host "   lib/providers.js  — LoL key fix, CS2 date filter, VALORANT live feed"
+Write-Host "   lib/data-cache.js — stale-while-revalidate, 800ms TTL"
+Write-Host ""
+Write-Host " Next steps:"
+Write-Host "   1. git add lib/providers.js lib/data-cache.js"
+Write-Host "   2. git commit -m 'fix: LoL 403, CS2 stale matches, VALORANT live scores'"
+Write-Host "   3. git push  (Vercel will auto-deploy)"
+Write-Host ""
+Write-Host " Optional: set LOL_API_KEY env var in Vercel to override the hardcoded key."
+Write-Host " The hardcoded key (0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z) is the"
+Write-Host " same public key used by every community LoL esports tool."
+Write-Host ""
