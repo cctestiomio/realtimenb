@@ -1,13 +1,60 @@
-﻿<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Realtime Sports</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <h1>Live Scores</h1>
-  <div id="app"></div>
-  <script src="app.js"></script>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realtime Sports Tracker</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <div class="top-row">
+        <div>
+          <h1>Realtime Sports Tracker</h1>
+          <p class="tagline">Live + upcoming (next 12h): NBA, LoL Esports, CS2/CSGO, VALORANT</p>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" type="button">&#127769; Dark mode</button>
+      </div>
+
+      <div id="sections" class="sections"></div>
+    </main>
+
+    <template id="sport-template">
+      <section class="sport-card" data-sport-card>
+        <h2 data-title></h2>
+        <form class="search-row" data-form>
+          <input data-input placeholder="Type game or click a listed match" required />
+          <button type="submit">Track</button>
+        </form>
+
+        <!-- LIVE NOW section (hidden until there are live games) -->
+        <div class="section-label section-label--live" data-live-header hidden>&#128994; Live Now</div>
+        <div class="games-list" data-live></div>
+
+        <!-- UPCOMING section -->
+        <p class="help" data-help>Loading&#8230;</p>
+        <div class="games-list" data-upcoming></div>
+
+        <!-- ALL OTHER (scheduled) -->
+        <div class="games-list" data-all></div>
+
+        <div class="stream-row" data-stream-row hidden>
+          <button class="stream-btn" type="button" data-stream-btn>Open official LoL Twitch stream</button>
+        </div>
+
+        <section class="score-card" data-score hidden>
+          <div class="team" data-away></div>
+          <div class="center">
+            <div class="status" data-status>Waiting&#8230;</div>
+            <div class="clock" data-clock></div>
+          </div>
+          <div class="team" data-home></div>
+        </section>
+
+        <p class="error" data-error role="alert"></p>
+      </section>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
 </html>
