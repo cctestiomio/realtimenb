@@ -33,3 +33,14 @@ Open http://localhost:3000.
 - `GET /api/games?sport=nba|lol|csgo|valorant` — list and upcoming matches.
 - `GET /api/track?sport=nba|lol|csgo|valorant&query=<text>` — current tracked match snapshot (poll this endpoint).
 - `GET /api/stream` — deprecated in this app build.
+
+## Polymarket monitor script
+
+A standalone script is included at `polymarket_monitor.py` with merge conflicts resolved and duplicate-threshold handling fixed.
+
+Run:
+
+```bash
+export DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'
+python3 polymarket_monitor.py
+```
