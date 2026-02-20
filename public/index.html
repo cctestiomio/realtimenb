@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -31,6 +31,15 @@
         <div class="section-label section-label--live" data-live-header hidden>&#128994; Live Now</div>
         <div class="games-list" data-live></div>
 
+        <section class="score-card" data-score hidden>
+          <div class="team" data-away></div>
+          <div class="center">
+            <div class="status" data-status>Waiting&#8230;</div>
+            <div class="clock" data-clock></div>
+          </div>
+          <div class="team" data-home></div>
+        </section>
+
         <!-- UPCOMING section -->
         <p class="help" data-help>Loading&#8230;</p>
         <div class="games-list" data-upcoming></div>
@@ -42,27 +51,18 @@
           <button class="stream-btn" type="button" data-stream-btn>Open official LoL Twitch stream</button>
         </div>
 
-        <section class="score-card" data-score hidden>
-          <div class="team" data-away></div>
-          <div class="center">
-            <div class="status" data-status>Waiting&#8230;</div>
-            <div class="clock" data-clock></div>
-          </div>
-          <div class="team" data-home></div>
-        </section>
-
         <p class="error" data-error role="alert"></p>
       </section>
     </template>
 
     <script type="module" src="/app.js"></script>
-      <style>
+    <style>
       /* Make live games look clickable */
       [data-live] > * { cursor: pointer; transition: background 0.2s ease; }
       [data-live] > *:hover { background: rgba(128, 128, 128, 0.1); }
     </style>
     <script>
-      // 5. Global listener: Clicking LIVE games opens their Twitch link
+      // Global listener: Clicking LIVE games opens their Twitch link
       document.addEventListener('click', (e) => {
         const liveMatch = e.target.closest('[data-live] > *');
         if (!liveMatch) return;
@@ -72,44 +72,28 @@
         if (!url) {
             const section = liveMatch.closest('section[data-sport-card]');
             if (section) {
+               // Try to find the specific stream button first
                const streamBtn = section.querySelector('[data-stream-btn]');
                if (streamBtn && streamBtn.dataset.url) {
                    url = streamBtn.dataset.url;
                } else {
-                   const title = section.querySelector('[data-title]')?.textContent || '';
-                   if (title.includes('LoL')) url = 'https://twitch.tv/riotgames';
-                   else if (title.includes('VALORANT')) url = 'https://twitch.tv/valorant';
-                   else if (title.includes('CS')) url = 'https://twitch.tv/hltvorg';
+                   // Fallback to category links based on title
+                   const title = (section.querySelector('[data-title]')?.textContent || '').toLowerCase();
+                   if (title.includes('lol') || title.includes('league')) {
+                       url = 'https://www.twitch.tv/directory/category/league-of-legends';
+                   } else if (title.includes('valorant')) {
+                       url = 'https://www.twitch.tv/directory/category/valorant';
+                   } else if (title.includes('cs2') || title.includes('csgo') || title.includes('counter-strike')) {
+                       url = 'https://www.twitch.tv/directory/category/counter-strike-2';
+                   }
                }
             }
         }
-        if (url) window.open(url, '_blank');
-      });
-    </script>
-    <script id="twitch-injector">
-      document.addEventListener('click', (e) => {
-        const isLiveList = e.target.closest('[data-live] > *');
-        const isTrackerCard = e.target.closest('[data-score]');
         
-        if (isLiveList || isTrackerCard) {
-           const section = e.target.closest('[data-sport-card]');
-           if (!section) return;
-           
-           const title = (section.querySelector('[data-title]')?.textContent || '').toLowerCase();
-           let url = '';
-           
-           if (title.includes('lol') || title.includes('league')) {
-              url = 'https://www.twitch.tv/directory/category/league-of-legends';
-           } else if (title.includes('valorant')) {
-              url = 'https://www.twitch.tv/directory/category/valorant';
-           } else if (title.includes('cs2') || title.includes('csgo') || title.includes('counter-strike')) {
-              url = 'https://www.twitch.tv/directory/category/counter-strike-2';
-           }
-           
-           if (url) window.open(url, '_blank', 'noopener,noreferrer');
+        if (url) {
+            window.open(url, '_blank', 'noopener,noreferrer');
         }
       });
     </script>
-    </body>
+  </body>
 </html>
-
