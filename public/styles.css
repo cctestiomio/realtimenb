@@ -142,23 +142,3 @@ input {
   .score-card { grid-template-columns: 1fr; text-align: center; }
   .team:last-child { text-align: center; }
 }
-
-
-.stream-row {
-  margin: 0.35rem 0 0.5rem;
-}
-
-.stream-btn {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.6rem 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.stream-btn:hover {
-  border-color: var(--accent);
-}
