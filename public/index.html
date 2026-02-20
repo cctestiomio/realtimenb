@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -56,5 +56,35 @@
     </template>
 
     <script type="module" src="/app.js"></script>
-  </body>
+      <style>
+      /* Make live games look clickable */
+      [data-live] > * { cursor: pointer; transition: background 0.2s ease; }
+      [data-live] > *:hover { background: rgba(128, 128, 128, 0.1); }
+    </style>
+    <script>
+      // 5. Global listener: Clicking LIVE games opens their Twitch link
+      document.addEventListener('click', (e) => {
+        const liveMatch = e.target.closest('[data-live] > *');
+        if (!liveMatch) return;
+        
+        let url = liveMatch.dataset.streamUrl || liveMatch.getAttribute('data-stream');
+        
+        if (!url) {
+            const section = liveMatch.closest('section[data-sport-card]');
+            if (section) {
+               const streamBtn = section.querySelector('[data-stream-btn]');
+               if (streamBtn && streamBtn.dataset.url) {
+                   url = streamBtn.dataset.url;
+               } else {
+                   const title = section.querySelector('[data-title]')?.textContent || '';
+                   if (title.includes('LoL')) url = 'https://twitch.tv/riotgames';
+                   else if (title.includes('VALORANT')) url = 'https://twitch.tv/valorant';
+                   else if (title.includes('CS')) url = 'https://twitch.tv/hltvorg';
+               }
+            }
+        }
+        if (url) window.open(url, '_blank');
+      });
+    </script>
+</body>
 </html>
