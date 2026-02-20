@@ -13,15 +13,6 @@ const themeToggle = document.querySelector('#theme-toggle');
 
 const state = new Map();
 
-async function safeJson(res) {
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: text?.slice(0, 180) || `HTTP ${res.status}` };
-  }
-}
-
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeToggle.textContent = theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode';
@@ -83,18 +74,18 @@ async function fetchTrack(sportKey, query, { silent = false } = {}) {
 
   try {
     const res = await fetch(`/api/track?sport=${encodeURIComponent(sportKey)}&query=${encodeURIComponent(query)}`);
-    const payload = await safeJson(res);
+    const payload = await res.json();
 
     if (!res.ok) {
       if (!silent) sportState.errorEl.textContent = payload.error || 'Could not track game.';
-      if (payload.warning) sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
+      if (payload.warning) sportState.helpEl.textContent = payload.warning;
       return;
     }
 
     renderTrackedMatch(sportKey, payload.match);
     if (payload.warning) {
-      sportState.helpEl.textContent = `Using fallback data: ${payload.warning}`;
-    } else {
+      sportState.helpEl.textContent = payload.warning;
+    } else if (!sportState.helpEl.textContent.startsWith('Upcoming in next 12 hours:')) {
       sportState.helpEl.textContent = 'Upcoming in next 12 hours:';
     }
     sportState.errorEl.textContent = '';
@@ -141,7 +132,7 @@ async function loadSportData(sportKey) {
 
   try {
     const res = await fetch(`/api/games?sport=${encodeURIComponent(sportKey)}`);
-    const data = await safeJson(res);
+    const data = await res.json();
 
     if (!res.ok) {
       sportState.helpEl.textContent = data.error || 'Could not load matches for this sport.';
@@ -173,7 +164,7 @@ async function loadSportData(sportKey) {
     sportState.input.value = top[0].label;
     startTracking(sportKey, top[0].label);
   } catch {
-    sportState.helpEl.textContent = 'Could not load matches right now. Check your Vercel API routes and retry.';
+    sportState.helpEl.textContent = 'Could not load matches right now. Retrying will use fallback data when available.';
   }
 }
 
@@ -229,5 +220,7 @@ themeToggle.addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', () => {
-  for (const sportState of state.values()) clearPolling(sportState);
+  for (const sportState of state.values()) {
+    clearPolling(sportState);
+  }
 });
