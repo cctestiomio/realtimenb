@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realtime Sports Tracker</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <div class="top-row">
+        <div>
+          <h1>Realtime Sports Tracker</h1>
+          <p class="tagline">Live + upcoming (next 12h): NBA, LoL Esports, CS2/CSGO, VALORANT</p>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" type="button">🌙 Dark mode</button>
+      </div>
+
+      <div id="sections" class="sections"></div>
+    </main>
+
+    <template id="sport-template">
+      <section class="sport-card" data-sport-card>
+        <h2 data-title></h2>
+        <form class="search-row" data-form>
+          <input data-input placeholder="Type game or click a listed match" required />
+          <button type="submit">Track</button>
+        </form>
+
+        <p class="help" data-help>Loading…</p>
+        <div class="games-list" data-upcoming></div>
+        <div class="games-list" data-all></div>
+
+        <section class="score-card" data-score hidden>
+          <div class="team" data-away></div>
+          <div class="center">
+            <div class="status" data-status>Waiting…</div>
+            <div class="clock" data-clock></div>
+          </div>
+          <div class="team" data-home></div>
+        </section>
+
+        <p class="error" data-error role="alert"></p>
+      </section>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
