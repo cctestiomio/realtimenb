@@ -91,6 +91,25 @@ function clearPolling(ss) {
 function renderTrackedMatch(sportKey, data) {
   const ss = state.get(sportKey);
   if (!ss) return;
+  // Strict Monotonic Filter for League of Legends
+  // Parses the clock string directly. If a lagging CDN node tries to send an 
+  // older timestamp, we completely drop the packet and freeze the UI at the newest time.
+  if (sportKey === 'lol' && data.clock && typeof data.clock === 'string') {
+      const timeMatch = data.clock.match(/(\d+):(\d+)/);
+      if (timeMatch) {
+          const secs = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
+          if (ss.maxSecs !== undefined && secs < ss.maxSecs) {
+              // Failsafe: if time jumps back by more than 10 minutes, assume game remake
+              if (ss.maxSecs - secs > 600) {
+                  ss.maxSecs = secs;
+              } else {
+                  return; // Silently drop lagging CDN packet!
+              }
+          } else {
+              ss.maxSecs = secs;
+          }
+      }
+  }
 
     
 
@@ -185,7 +204,7 @@ function startTracking(sportKey, query) {
   const ss = state.get(sportKey);
   if (!ss) return;
   clearPolling(ss);
-  ss.currentQuery         = query;
+  ss.currentQuery = query; ss.maxSecs = -1;
   ss.scoreEl.hidden       = false;
   ss.statusEl.textContent = 'Loading\u2026';
   ss.clockEl.textContent  = '';

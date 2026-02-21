@@ -3,50 +3,45 @@ $file = "public\app.js"
 Write-Host "Patching $file..." -ForegroundColor Cyan
 $src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
 
-# 1. Clean up the old monotonic filter if it successfully applied last time
-$src = $src -replace '(?s)// Monotonic Filter:.*?ss\.maxDiff = data\.rawDiff;\s*}', ''
+# 1. Reset the maxSecs tracker when you click a new match
+$startTrackingPattern = "ss\.currentQuery\s*=\s*query;"
+if ($src -match $startTrackingPattern -and -not $src.Contains("ss.maxSecs = -1;")) {
+    $src = $src -replace $startTrackingPattern, "ss.currentQuery = query; ss.maxSecs = -1;"
+}
 
-# 2. Inject the Sliding Window Minimum filter precisely into the render function
-$exactTarget = @'
-function renderTrackedMatch(sportKey, data) {
-  const ss = state.get(sportKey);
-  if (!ss) return;
+# 2. Add the String-Parsing Monotonic Filter
+$renderPattern = "(function renderTrackedMatch\(sportKey, data\) \{[\s\S]*?if \(!ss\) return;)"
+    
+$filterLogic = @'
 
-  updateGlobalRefresh();
-'@
-
-$exactNew = @'
-function renderTrackedMatch(sportKey, data) {
-  const ss = state.get(sportKey);
-  if (!ss) return;
-
-  // Sliding Window Minimum Filter
-  // Keeps the last 3 seconds of network requests and strictly uses the earlier (lowest) timer
-  // This guarantees 0 bouncing while keeping latency at the absolute minimum.
-  if (data.rawDiff !== undefined) {
-      if (!ss.diffHistory) ss.diffHistory = [];
-      ss.diffHistory.push(data.rawDiff);
-      
-      // Store 6 polls (3 seconds at 500ms per poll)
-      if (ss.diffHistory.length > 6) ss.diffHistory.shift();
-      
-      const stableDiff = Math.min(...ss.diffHistory);
-      if (stableDiff >= 0) {
-          const m = Math.floor(stableDiff / 60000);
-          const s = Math.floor((stableDiff % 60000) / 1000);
-          data.clock = m + ':' + String(s).padStart(2, '0');
+  // Strict Monotonic Filter for League of Legends
+  // Parses the clock string directly. If a lagging CDN node tries to send an 
+  // older timestamp, we completely drop the packet and freeze the UI at the newest time.
+  if (sportKey === 'lol' && data.clock && typeof data.clock === 'string') {
+      const timeMatch = data.clock.match(/(\d+):(\d+)/);
+      if (timeMatch) {
+          const secs = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
+          if (ss.maxSecs !== undefined && secs < ss.maxSecs) {
+              // Failsafe: if time jumps back by more than 10 minutes, assume game remake
+              if (ss.maxSecs - secs > 600) {
+                  ss.maxSecs = secs;
+              } else {
+                  return; // Silently drop lagging CDN packet!
+              }
+          } else {
+              ss.maxSecs = secs;
+          }
       }
   }
-
-  updateGlobalRefresh();
 '@
 
-if ($src.Contains("ss.diffHistory.push(data.rawDiff);")) {
-    Write-Host "-> Sliding Window Filter is already applied!" -ForegroundColor Yellow
-} elseif ($src.Contains("function renderTrackedMatch(sportKey, data) {")) {
-    $src = $src.Replace($exactTarget, $exactNew)
-    [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully applied Sliding Window Minimum Filter to stop timer bouncing!" -ForegroundColor Green
-} else {
-    Write-Error "Could not find the target block in app.js"
+# Clean out the old non-working filters
+$src = $src -replace '(?s)// Sliding Window Minimum Filter.*?if \(stableDiff >= 0\) \{.*?\}\n\s*\}\n', ''
+$src = $src -replace '(?s)// Monotonic Filter:.*?ss\.maxDiff = data\.rawDiff;\n\s*\}\n', ''
+
+if (!$src.Contains("ss.maxSecs = secs;")) {
+    $src = $src -replace $renderPattern, "`$1$filterLogic"
 }
+
+[System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
+Write-Host "-> Successfully applied bulletproof frontend timer filter!" -ForegroundColor Green
