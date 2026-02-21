@@ -7,7 +7,7 @@ cd /d "C:\Users\Sithu\Documents\fasscript\realnbatime" || (
   exit /b 1
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\a.ps1" && npm run dev
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\a.ps1" && git add -A && git commit -m "update" && git push
 
 echo.
 echo ExitCode=%errorlevel%

@@ -1,125 +1,200 @@
-<#
-.SYNOPSIS
-    Automated Remediation Script for Vercel Serverless Crashes (JSDOM Removal)
 
-.DESCRIPTION
-    This script parses lib/providers.js. It performs regex substitutions to:
-    1. Eradicate the memory-heavy 'jsdom' import which crashes Vercel on cold boots.
-    2. Replace the fetchVlrMatchDetails function with a lightweight Regex parser.
-    3. Replace the getValorantData function with a lightweight Regex parser.
-#>
+$ErrorActionPreference = 'Stop'
 
-$FilePath = ".\lib\providers.js"
+$file = $null
+foreach ($candidate in @('lib\providers.js','pages\api\lib\providers.js')) {
+    if (Test-Path $candidate) { $file = $candidate; break }
+}
+if (-not $file) { Write-Error 'Cannot find lib\providers.js'; exit 1 }
 
-if (-Not (Test-Path $FilePath)) {
-    Write-Error "CRITICAL: Target file not found at path: $FilePath. Execution aborted."
-    exit
+Write-Host "Patching: $file" -ForegroundColor Cyan
+Copy-Item $file "$file.bak" -Force
+$src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
+
+function Patch($label, $old, $new) {
+    if ($script:src.Contains($old)) {
+        $script:src = $script:src.Replace($old, $new)
+        Write-Host "  [OK] $label" -ForegroundColor Green
+    } else {
+        Write-Warning "  [SKIP] $label – anchor not found"
+    }
 }
 
-$Content = Get-Content -Path $FilePath -Raw
-
-# =====================================================================
-# PHASE 1: Remove the memory-leaking JSDOM import
-# =====================================================================
-$Content = $Content -replace '(?m)^import\s+\{\s*JSDOM\s*\}\s+from\s+[''"]jsdom[''"];?\s*$', ''
-
-# =====================================================================
-# PHASE 2: Rewrite fetchVlrMatchDetails without JSDOM
-# =====================================================================
-$oldVlrDetails = '(?s)async function fetchVlrMatchDetails\(url\).*?(?=async function getValorantData)'
-$newVlrDetails = @'
-async function fetchVlrMatchDetails(url) {
-    try {
-        const text = await fetchText(url);
-        if (!text) return {};
-        let streamUrl = null;
-        let roundScore = null;
-        
-        const siteId = text.match(/data-site-id=["']([^"']+)["']/);
-        if (siteId) streamUrl = `https://twitch.tv/${siteId[1]}`;
-        else {
-            const extLink = text.match(/class=["'][^"']*match-streams-btn-external[^"']*["'][^>]*href=["']([^"']+)["']/);
-            if (extLink) streamUrl = extLink[1];
-        }
-        
-        const activeMap = text.match(/class=["'][^"']*vm-stats-gamesnav-item[^"']*mod-active[^"']*["'][^>]*>.*?<div[^>]*>\s*(\d+)\s*:\s*(\d+)\s*<\/div>/s);
-        if (activeMap) roundScore = `${activeMap[1]}-${activeMap[2]}`;
-        else {
-            const liveScore = text.match(/class=["'][^"']*vlr-live-score[^"']*["'][^>]*>([^<]+)<\/div>/);
-            if (liveScore) roundScore = liveScore[1].trim();
-        }
-        return { streamUrl, roundScore };
-    } catch { return {}; }
+Patch 'formatNbaTime: handle decimal seconds + strip ms' @'
+function formatNbaTime(str) {
+  if (!str) return '';
+  const m = str.match(/PT(\d+)M(\d+)(?:\.(\d+))?S/);
+  if (m) {
+    const [, min, sec, ms] = m;
+    const secStr = String(sec).padStart(2, '0');
+    // Only show decimals if non-zero - prevents "4:43.00" from CDN source
+    if (ms && ms.replace(/0/g, '') !== '') return `${min}:${secStr}.${ms.slice(0, 2)}`;
+    return `${min}:${secStr}`;
+  }
+  // ESPN sends plain "4:43" - pass through unchanged
+  if (/^\d+:\d+$/.test(str.trim())) return str.trim();
+  if (/\d/.test(str)) return str;
+  return '';
 }
-
+'@ @'
+function formatNbaTime(str) {
+  if (!str) return '';
+  // ISO duration from NBA CDN: PT4M43.00S  – strip fractional seconds always
+  const mISO = str.match(/PT(\d+)M(\d+)(?:\.\d+)?S/);
+  if (mISO) {
+    const [, min, sec] = mISO;
+    return `${min}:${String(sec).padStart(2, '0')}`;
+  }
+  // Plain MM:SS from ESPN e.g. "4:43"
+  if (/^\d+:\d+$/.test(str.trim())) return str.trim();
+  // Plain decimal-seconds from CDN end-of-period e.g. "48.4" -> "0:48"
+  if (/^\d+(\.\d+)?$/.test(str.trim())) {
+    const totalSec = parseFloat(str);
+    if (!isNaN(totalSec)) {
+      const mm = Math.floor(totalSec / 60);
+      const ss = Math.floor(totalSec % 60);
+      return `${mm}:${String(ss).padStart(2, '0')}`;
+    }
+  }
+  return '';
+}
 '@
-$Content = $Content -replace $oldVlrDetails, $newVlrDetails
 
-# =====================================================================
-# PHASE 3: Rewrite getValorantData without JSDOM
-# =====================================================================
-$oldVlrData = '(?s)async function getValorantData\(\).*?(?=// === CS2 ===)'
-$newVlrData = @'
-async function getValorantData() {
-  const allGames = [];
+Patch 'getNbaData: CDN-first sequential fetch' @'
+async function getNbaData() {
+  const tasks = [
+    fetchJson(NBA_URL).then(p => ({ games: (p?.scoreboard?.games || []).map(serializeNbaFromCdn) })),
+    fetchJson(NBA_FALLBACK_URL).then(p => ({ games: (p?.events || []).map(serializeNbaFromEspn) }))
+  ];
+  const result = await Promise.any(tasks.map(t => t.catch(e => { throw e; }))).catch(() => null);
+  if (!result?.games?.length) return { games: [], upcoming: [], warning: null };
+  return {
+    games: result.games,
+    upcoming: result.games
+      .filter(g => inNext12h(parseDate(g.startTime)))
+      .sort((a, b) => (parseDate(a.startTime) || Infinity) - (parseDate(b.startTime) || Infinity)),
+    warning: null
+  };
+}
+'@ @'
+async function getNbaData() {
+  // Always prefer CDN (authoritative, consistent clock format).
+  // Fall back to ESPN only if CDN fails – never race them simultaneously.
+  let result = null;
   try {
-     const text = await fetchText('https://www.vlr.gg/matches');
-     const matchNodes = text.match(/<a[^>]*href=["']\/(\d+)\/[^"']+["'][^>]*class=["'][^"']*match-item[^"']*["'][\s\S]*?<\/a>/g) || [];
-     const now = new Date();
-
-     for (const node of matchNodes) {
-         const idMatch = node.match(/href=["']\/(\d+)\//);
-         const id = idMatch ? idMatch[1] : 'unknown';
-         const matchUrl = `https://www.vlr.gg/${id}`;
-
-         const teams = [...node.matchAll(/class=["']match-item-vs-team-name["'][^>]*>\s*([^<]+?)\s*<\/div>/g)];
-         const t1 = teams[0] ? teams[0][1].trim() : 'TBD';
-         const t2 = teams[1] ? teams[1][1].trim() : 'TBD';
-
-         const eventNode = node.match(/class=["']match-item-event["'][^>]*>([\s\S]*?)<\/div>/);
-         let league = eventNode ? eventNode[1].replace(/<[^>]+>/g, '').trim().split('\n')[0].trim() : 'Valorant';
-
-         const statusNode = node.match(/class=["']ml-status["'][^>]*>\s*([^<]+?)\s*<\/div>/);
-         let isLive = statusNode && statusNode[1].trim().toLowerCase() === 'live';
-
-         const scores = [...node.matchAll(/class=["']match-item-vs-team-score["'][^>]*>\s*([^<]+?)\s*<\/div>/g)];
-         let s1 = scores[0] ? scores[0][1].trim() : '0';
-         let s2 = scores[1] ? scores[1][1].trim() : '0';
-         let score = `${s1}-${s2}`;
-
-         let startTime = isLive ? now.toISOString() : new Date().toISOString();
-
-         allGames.push({
-             matchId: id, label: `${t1} vs ${t2}`, status: isLive ? 'Live' : 'Scheduled',
-             startTime, league, score, matchUrl, clock: null, streamUrl: null
-         });
-     }
-
-     const liveGames = allGames.filter(g => g.status === 'Live');
-     const upcomingGames = allGames.filter(g => g.status !== 'Live').slice(0, 5);
-     const targets = [...liveGames, ...upcomingGames];
-
-     await Promise.all(targets.map(async (g) => {
-         const details = await fetchVlrMatchDetails(g.matchUrl);
-         if (details.streamUrl) g.streamUrl = details.streamUrl;
-         if (details.roundScore) g.score = `${g.score} (Map: ${details.roundScore})`;
-     }));
-
-  } catch(e) {}
-
-  const deduped = [...new Map(allGames.map((g) => [g.matchId, g])).values()];
-  if (!deduped.length) return { games:[], upcoming:[], warning: 'Could not scrape live data' };
-  
-  deduped.sort((a, b) => (isLiveStr(a.status)?0:1) - (isLiveStr(b.status)?0:1));
-  return { games: deduped, upcoming: deduped.filter((g) => g.status !== 'Live').slice(0, 10), warning: null };
+    const p     = await fetchJson(NBA_URL);
+    const games = (p?.scoreboard?.games || []).map(serializeNbaFromCdn);
+    if (games.length) result = { games };
+  } catch { /* fall through */ }
+  if (!result?.games?.length) {
+    try {
+      const p     = await fetchJson(NBA_FALLBACK_URL);
+      const games = (p?.events || []).map(serializeNbaFromEspn);
+      if (games.length) result = { games };
+    } catch { /* no data */ }
+  }
+  if (!result?.games?.length) return { games: [], upcoming: [], warning: null };
+  return {
+    games: result.games,
+    upcoming: result.games
+      .filter(g => inNext12h(parseDate(g.startTime)))
+      .sort((a, b) => (parseDate(a.startTime) || Infinity) - (parseDate(b.startTime) || Infinity)),
+    warning: null
+  };
 }
-
 '@
-$Content = $Content -replace $oldVlrData, $newVlrData
 
-# =====================================================================
-# PHASE 4: Write Output to Disk
-# =====================================================================
-$Content | Set-Content -Path $FilePath -NoNewline
+Patch 'CS2: expanded source list' @'
+// === CS2 - ordered by reliability ===
+const CS_SOURCES = [
+  'https://hltv-api-rust.vercel.app/api/matches',
+  'https://hltv-api-py.vercel.app/api/matches',
+  'https://hltv-api-steel.vercel.app/api/matches',
+  'https://hltv-api.vercel.app/api/matches.json',
+];
+'@ @'
+// === CS2 - ordered by reliability, more mirrors added ===
+const CS_SOURCES = [
+  'https://hltv-api-rust.vercel.app/api/matches',
+  'https://hltv-api-py.vercel.app/api/matches',
+  'https://hltv-api-xi.vercel.app/api/matches',
+  'https://hltv-api-steel.vercel.app/api/matches',
+  'https://hltv-api.vercel.app/api/matches.json',
+  'https://hltv-free.vercel.app/api/matches',
+  'https://hltv.orion-alpha.com/api/matches',
+];
+'@
 
-Write-Output "Remediation complete. JSDOM has been removed and Vercel functions should now respond instantly."
+
+Patch 'CS2: getCsDataFromBo3 + HTML scrape' @'
+// bo3.gg JSON API - fallback when HLTV mirrors are all down
+async function getCsDataFromBo3() {
+  const all  = [];
+  const urls = [
+    'https://api.bo3.gg/api/v1/matches?filter[status]=live',
+    'https://api.bo3.gg/api/v1/matches?filter[status]=upcoming&page[size]=20',
+    'https://bo3.gg/api/v1/matches?filter[status]=live',
+    'https://bo3.gg/api/v1/matches?filter[status]=upcoming&page[size]=20',
+  ];
+'@ @'
+// bo3.gg – tries JSON API then falls back to HTML scrape
+async function getCsDataFromBo3() {
+  const all  = [];
+  const urls = [
+    'https://bo3.gg/api/v1/matches?filter%5Bstatus%5D%5B%5D=live&filter%5Bstatus%5D%5B%5D=upcoming',
+    'https://api.bo3.gg/api/v1/matches?filter%5Bstatus%5D%5B%5D=live&filter%5Bstatus%5D%5B%5D=upcoming',
+    'https://bo3.gg/api/v1/matches?filter[status][]=live&filter[status][]=upcoming&page[size]=20',
+    'https://api.bo3.gg/api/v1/matches?filter[status][]=live&filter[status][]=upcoming&page[size]=20',
+  ];
+'@
+
+
+Patch 'CS2: PandaScore with longer timeout' @'
+// PandaScore free public endpoint - last resort CS2 fallback
+async function getCsDataFromPanda() {
+  const all = [];
+  try {
+    const [liveData, upData] = await Promise.all([
+      fetchJson('https://api.pandascore.co/csgo/matches/running?page[size]=20'),
+      fetchJson('https://api.pandascore.co/csgo/matches/upcoming?page[size]=20&sort=begin_at'),
+    ]);
+'@ @'
+// PandaScore free public endpoint - last resort CS2 fallback
+async function getCsDataFromPanda() {
+  const all = [];
+  try {
+    // Use 10 s timeout for these slower free-tier endpoints
+    const { controller: c1, cleanup: cl1 } = withTimeout(10000);
+    const { controller: c2, cleanup: cl2 } = withTimeout(10000);
+    const [liveData, upData] = await Promise.all([
+      fetch('https://api.pandascore.co/csgo/matches/running?page[size]=20',  { cache:'no-store', signal:c1.signal }).then(r=>r.json()).finally(cl1),
+      fetch('https://api.pandascore.co/csgo/matches/upcoming?page[size]=20&sort=begin_at', { cache:'no-store', signal:c2.signal }).then(r=>r.json()).finally(cl2),
+    ]);
+'@
+
+
+[System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
+Write-Host "`nDone. Backup: $file.bak" -ForegroundColor Cyan
+Write-Host 'Clear cache + restart:  Remove-Item -Recurse -Force .next ; npm run dev' -ForegroundColor Yellow
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
