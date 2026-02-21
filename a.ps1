@@ -13,62 +13,60 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
     $newFunc = @"
 async function fetchLolStats(gameId) {
   try {
-    const winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
-    if (!winData || !winData.frames || !winData.frames.length) return { error: 'No live window' };
+    // 1. Generate the startingTime exactly like the reference github
+    // Subtract 60 seconds and round to nearest 10s multiple
+    const d = new Date();
+    d.setMilliseconds(0);
+    const sec = d.getSeconds();
+    d.setSeconds(sec - (sec % 10) - 60);
+    const startingTime = d.toISOString();
 
-    // 1. Fix the "Stuck at 0:05" bug
-    // Stream the details endpoint just enough to grab the true game start time.
-    // This prevents massive JSON timeout issues in serverless.
+    const url = 'https://feed.lolesports.com/livestats/v1/window/' + gameId;
+    
+    // 2. Fetch the live window using the startingTime parameter
+    let winData = await fetchJson(url + '?startingTime=' + startingTime).catch(() => null);
+    
+    // Fallback if the game just started and 60 seconds ago doesn't exist yet
+    if (!winData || !winData.frames || !winData.frames.length) {
+        winData = await fetchJson(url).catch(() => null);
+    }
+    
+    if (!winData || !winData.frames || !winData.frames.length) return { error: 'No live frames' };
+
+    // 3. Cache the true start time of the game to calculate the game clock
     if (!gameStartCache.has(gameId)) {
-        try {
-            const res = await fetch('https://feed.lolesports.com/livestats/v1/details/' + gameId);
-            if (res.ok && res.body) {
-                let chunkStr = '';
-                for await (const chunk of res.body) {
-                    chunkStr += chunk.toString();
-                    const match = chunkStr.match(/"rfc460Timestamp"\s*:\s*"([^"]+)"/);
-                    if (match) {
-                        gameStartCache.set(gameId, new Date(match[1]).getTime());
-                        if (typeof res.body.destroy === 'function') res.body.destroy();
-                        if (typeof res.body.cancel === 'function') res.body.cancel();
-                        break;
-                    }
-                    if (chunkStr.length > 200000) break;
-                }
-            }
-        } catch(e) {}
-        
-        if (!gameStartCache.has(gameId)) {
+        // Fetch without startingTime to intentionally get the beginning of the match
+        const startData = await fetchJson(url).catch(() => null);
+        if (startData && startData.frames && startData.frames.length) {
+            gameStartCache.set(gameId, new Date(startData.frames[0].rfc460Timestamp).getTime());
+        } else {
             gameStartCache.set(gameId, new Date(winData.frames[0].rfc460Timestamp).getTime());
         }
     }
 
     const frames = winData.frames;
-    const lastTimeFrame = frames[frames.length - 1];
-    
-    // 2. Fix the "Kills are 0 - 0" bug
-    // Scan backwards for the last frame that actually contains game state.
-    // Riot often sends empty "heartbeat" frames at the end of the array.
-    const stateFrame = frames.slice().reverse().find(f => f.blueTeam || (f.participants && f.participants.length > 0)) || lastTimeFrame;
+    const last = frames[frames.length - 1];
 
+    // 4. Calculate Kills
+    let k1 = 0, k2 = 0;
+    if (last.blueTeam && last.blueTeam.totalKills !== undefined) {
+        k1 = last.blueTeam.totalKills;
+        k2 = last.redTeam?.totalKills || 0;
+    } else if (last.participants) {
+        k1 = last.participants.slice(0, 5).reduce((sum, p) => sum + (p.kills || 0), 0);
+        k2 = last.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
+    }
+
+    // 5. Calculate running Game Clock
     const start = gameStartCache.get(gameId);
-    const end = new Date(lastTimeFrame.rfc460Timestamp).getTime();
-    let diff = end - start;
+    const end = new Date(last.rfc460Timestamp).getTime();
+    const diff = end - start;
     
     let clock = 'LIVE';
     if (diff >= 0) {
       const m = Math.floor(diff / 60000);
       const s = Math.floor((diff % 60000) / 1000);
       clock = m + ':' + String(s).padStart(2, '0');
-    }
-
-    let k1 = 0, k2 = 0;
-    if (stateFrame.blueTeam) {
-        k1 = stateFrame.blueTeam.totalKills ?? stateFrame.blueTeam.kills ?? 0;
-        k2 = stateFrame.redTeam?.totalKills ?? stateFrame.redTeam?.kills ?? 0;
-    } else if (stateFrame.participants && stateFrame.participants.length >= 10) {
-        k1 = stateFrame.participants.slice(0, 5).reduce((sum, p) => sum + (p.kills || 0), 0);
-        k2 = stateFrame.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
     }
 
     return { k1, k2, clock };
@@ -80,7 +78,7 @@ async function fetchLolStats(gameId) {
 "@
     $src = $src.Replace($oldFunc, $newFunc)
     [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully patched LoL fetching logic!" -ForegroundColor Green
+    Write-Host "-> Successfully patched LoL fetching logic with startingTime offset!" -ForegroundColor Green
 } else {
     Write-Error "Could not find fetchLolStats block"
 }
