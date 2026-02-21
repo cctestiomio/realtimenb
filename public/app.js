@@ -30,7 +30,7 @@ function updateGlobalRefresh() {
 }
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const isLiveStatus = (s = '') => /\b(live|inprogress|in.?progress|ongoing)\b/i.test(s);
+const isLiveStatus = (s = '') => /\b(live|inprogress|in.?progress|ongoing|halftime)\b/i.test(s);
 
 function formatPacificTime(isoValue) {
   if (!isoValue) return 'TBD';
@@ -89,6 +89,47 @@ function updateLolStreamButton(ss, match) {
 
 function clearPolling(ss) {
   if (ss.pollTimer) { clearInterval(ss.pollTimer); ss.pollTimer = null; }
+  if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
+}
+
+function startCountdown(ss, clockStr) {
+  if (ss.countdownTimer) clearInterval(ss.countdownTimer);
+
+  const parts = clockStr.split(BULLET).map(s => s.trim());
+  if (parts.length < 2) return;
+
+  const prefix = parts[0];
+  const timeStr = parts[1];
+
+  // MM:SS.ms or MM:SS
+  const match = timeStr.match(/^(\d+):(\d+)(?:\.(\d+))?$/);
+  if (!match) return;
+
+  let min = parseInt(match[1], 10);
+  let sec = parseInt(match[2], 10);
+  // If ms is 2 digits (e.g. "00"), treat as centiseconds.
+  let msVal = match[3] || '0';
+  // Pad to 3 digits to get milliseconds
+  let ms = parseInt(msVal.padEnd(3, '0').slice(0, 3), 10);
+
+  let totalMs = (min * 60 * 1000) + (sec * 1000) + ms;
+  const tickRate = 100;
+
+  ss.countdownTimer = setInterval(() => {
+    totalMs -= tickRate;
+    if (totalMs <= 0) {
+      totalMs = 0;
+      clearInterval(ss.countdownTimer);
+      ss.countdownTimer = null;
+    }
+
+    const m = Math.floor(totalMs / 60000);
+    const s = Math.floor((totalMs % 60000) / 1000);
+    const centi = Math.floor((totalMs % 1000) / 10);
+
+    const formatted = `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`;
+    ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
+  }, tickRate);
 }
 
 function renderTrackedMatch(sportKey, data) {
@@ -105,7 +146,22 @@ function renderTrackedMatch(sportKey, data) {
     // If live/active, don't show the start time, just the clock
     const isLive = isLiveStatus(data.status) || /Q\d|OT|Half/i.test(data.clock);
     const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
-    ss.clockEl.textContent  = `${data.clock}${timeInfo}`;
+    ss.clockEl.textContent  = `${data.clock || ''}${timeInfo}`;
+
+    if (isLive) {
+      // Clear duplicate status if it's already in the clock text or looks like a time string
+      if (data.clock && (data.clock.includes(data.status) || /\d+:\d+/.test(data.status))) {
+        ss.statusEl.textContent = '';
+      }
+      // Start countdown if we have a valid clock string
+      if (data.clock && /\d+:\d+/.test(data.clock)) {
+        startCountdown(ss, data.clock);
+      } else if (ss.countdownTimer) {
+        clearInterval(ss.countdownTimer); ss.countdownTimer = null;
+      }
+    } else {
+      if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
+    }
     return;
   }
 
@@ -270,7 +326,7 @@ function mountSportSection(sport) {
     root, form, input, helpEl, liveHeaderEl, liveEl,
     upcomingEl, allEl, streamRow, streamBtn,
     scoreEl, awayEl, homeEl, statusEl, clockEl, errorEl, refreshTimeEl,
-    pollTimer: null, currentQuery: ''
+    pollTimer: null, countdownTimer: null, currentQuery: ''
   });
 
   form.addEventListener('submit', (e) => { e.preventDefault(); startTracking(sport.key, input.value); });
