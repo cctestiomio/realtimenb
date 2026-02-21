@@ -3,154 +3,104 @@ $file = "lib\providers.js"
 Write-Host "Patching $file..." -ForegroundColor Cyan
 $src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
 
-$startStr = "// bo3.gg JSON API - fallback when HLTV mirrors are all down"
-$endStr = "function pickByQuery(events, query) {"
-
+$startStr = "async function fetchLolStats"
+$endStr = "async function getLolData"
 $startIdx = $src.IndexOf($startStr)
 $endIdx = $src.IndexOf($endStr)
 
 if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
     $oldFunc = $src.Substring($startIdx, $endIdx - $startIdx)
-    $newCode = @'
-// === CS2 MULTI-FALLBACK ENGINE ===
-
-async function getCsDataFromLiquipedia() {
-  const all = [];
+    $newFunc = @'
+async function fetchLolStats(gameId) {
   try {
-    const html = await fetchText('https://liquipedia.net/counterstrike/Liquipedia:Matches', {
-      headers: { 'User-Agent': 'realtimenb/2.0 (github.com/cctestiomio)' }
-    });
-    const tables = html.match(/<table[^>]*infobox_matches_content[\s\S]*?<\/table>/g) || [];
-    const now = Date.now();
-    for (const tbl of tables) {
-       const t1m = tbl.match(/<td class="team-left"[\s\S]*?<a[^>]*title="([^"]+)"/);
-       const t2m = tbl.match(/<td class="team-right"[\s\S]*?<a[^>]*title="([^"]+)"/);
-       const timeM = tbl.match(/data-timestamp="(\d+)"/);
-       if (t1m && t2m && timeM) {
-          const t1 = t1m[1].replace(' (page does not exist)', '');
-          const t2 = t2m[1].replace(' (page does not exist)', '');
-          const ts = parseInt(timeM[1]) * 1000;
-          const isLive = now >= ts && now < ts + (3 * 3600 * 1000);
-          
-          let league = 'CS2 Match';
-          const tourM = tbl.match(/<div class="tourney-text"[^>]*><a[^>]*title="([^"]+)"/);
-          if (tourM) league = tourM[1].replace(' (page does not exist)', '');
+    let winData = null;
+    const d = new Date();
+    d.setMilliseconds(0);
+    const sec = d.getSeconds();
+    
+    // Snap to the current 10-second bucket
+    d.setSeconds(sec - (sec % 10));
 
-          all.push(serializeEsport({
-             matchId: 'lq-' + ts + '-' + t1.replace(/\s+/g,''),
-             label: t1 + ' vs ' + t2,
-             status: isLive ? 'Live' : 'Scheduled',
-             startTime: new Date(ts).toISOString(),
-             league: league
-          }));
-       }
+    // Aggressively hunt for the absolute newest chunk Riot has published.
+    const offsets = [10, 20, 30, 40, 50, 60];
+    for (const offset of offsets) {
+        const attemptDate = new Date(d.getTime() - (offset * 1000));
+        const url = 'https://feed.lolesports.com/livestats/v1/window/' + gameId + '?startingTime=' + attemptDate.toISOString();
+        
+        winData = await fetchJson(url).catch(() => null);
+        if (winData && winData.frames && winData.frames.length > 0) {
+            break; 
+        }
     }
-  } catch {}
-  return all;
-}
 
-async function getCsDataFromHltvRss() {
-  const all = [];
-  try {
-    const xml = await fetchText('https://www.hltv.org/rss/matches', {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    const itemRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<pubDate>(.*?)<\/pubDate>[\s\S]*?<\/item>/g;
-    let m;
-    const now = Date.now();
-    while ((m = itemRegex.exec(xml)) !== null) {
-      const title = m[1].replace(/<!\[CDATA\[(.*?)\]\]>/, '$1').trim();
-      const pubDate = m[2].trim();
-      if (!title.includes(' vs ')) continue;
-      const ts = new Date(pubDate).getTime();
-      const isLive = ts <= now && ts > now - (3 * 3600 * 1000);
-      all.push(serializeEsport({
-        matchId: 'hltvrss-' + ts,
-        label: title,
-        status: isLive ? 'Live' : 'Scheduled',
-        startTime: new Date(ts).toISOString(),
-        league: 'CS2 Match'
-      }));
+    if (!winData || !winData.frames || !winData.frames.length) {
+        winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
     }
-  } catch {}
-  return all;
-}
+    
+    if (!winData || !winData.frames || !winData.frames.length) return { error: 'No live frames' };
 
-async function getCsDataFromBo3() {
-  const all = [];
-  const urls = [
-    'https://api.bo3.gg/api/v1/matches?filter[status]=live',
-    'https://api.bo3.gg/api/v1/matches?filter[status]=upcoming&page[size]=20'
-  ];
-  for (const url of urls) {
-    try {
-      const p = await fetchJson(url, { headers: { 'Accept': 'application/json' } });
-      const items = Array.isArray(p) ? p : (p?.data || p?.matches || []);
-      for (const item of items) {
-        const t1 = item.firstRoster?.name || item.team1?.name || 'TBD';
-        const t2 = item.secondRoster?.name || item.team2?.name || 'TBD';
-        if (t1 === 'TBD' && t2 === 'TBD') continue;
-        const live = String(item.status) === 'live';
-        const st = item.startedAt || item.scheduledAt || item.date;
-        all.push(serializeEsport({
-          matchId: String(item.id || t1+t2),
-          label: `${t1} vs ${t2}`,
-          status: live ? 'Live' : 'Scheduled',
-          startTime: st ? new Date(st).toISOString() : null,
-          league: item.tournament?.name || 'CS2 Match'
-        }));
-      }
-    } catch {}
+    // GUARANTEE THE EXACT TRUE START TIME to fix Lambda caching bounces
+    if (!gameStartCache.has(gameId)) {
+        try {
+            const res = await fetch('https://feed.lolesports.com/livestats/v1/details/' + gameId);
+            if (res.ok && res.body) {
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let chunkStr = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunkStr += decoder.decode(value, { stream: true });
+                    const match = chunkStr.match(/"rfc460Timestamp"\s*:\s*"([^"]+)"/);
+                    if (match) {
+                        gameStartCache.set(gameId, new Date(match[1]).getTime());
+                        reader.cancel(); // Abort the massive download immediately!
+                        break;
+                    }
+                    if (chunkStr.length > 100000) break; // Safety cutoff
+                }
+            }
+        } catch (e) {}
+        
+        // Absolute last resort fallback
+        if (!gameStartCache.has(gameId)) {
+            gameStartCache.set(gameId, new Date(winData.frames[0].rfc460Timestamp).getTime());
+        }
+    }
+
+    const frames = winData.frames;
+    const last = frames[frames.length - 1];
+
+    let k1 = 0, k2 = 0;
+    if (last.blueTeam && last.blueTeam.totalKills !== undefined) {
+        k1 = last.blueTeam.totalKills;
+        k2 = last.redTeam?.totalKills || 0;
+    } else if (last.participants) {
+        k1 = last.participants.slice(0, 5).reduce((sum, p) => sum + (p.kills || 0), 0);
+        k2 = last.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
+    }
+
+    const start = gameStartCache.get(gameId);
+    const end = new Date(last.rfc460Timestamp).getTime();
+    const diff = end - start;
+    
+    let clock = 'LIVE';
+    if (diff >= 0) {
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      clock = m + ':' + String(s).padStart(2, '0');
+    }
+
+    return { k1, k2, clock };
+  } catch (err) {
+    return { error: 'Fetch failed: ' + err.message };
   }
-  return all;
-}
-
-function processCsGames(games, warningMsg) {
-  const valid = games.filter(g => !isCompleted(g.status) && (isLiveStr(g.status) || parseDate(g.startTime) > Date.now() - STALE_CUTOFF_MS));
-  if (!valid.length) return null;
-  return {
-    games: valid,
-    upcoming: valid
-      .filter(g => !isLiveStr(g.status) && inNextXh(parseDate(g.startTime)))
-      .sort((a, b) => (parseDate(a.startTime) || Infinity) - (parseDate(b.startTime) || Infinity)),
-    warning: warningMsg
-  };
-}
-
-async function getCsData() {
-  // 1. Try HLTV mirror APIs (often dead/rate-limited)
-  for (const url of CS_SOURCES) {
-    try {
-      const p = await fetchJson(url);
-      const items = Array.isArray(p) ? p : (p?.matches || []);
-      const games = items.map(mapCsMatch);
-      const res = processCsGames(games, null);
-      if (res) return res;
-    } catch {}
-  }
-
-  // 2. Liquipedia Scraper (Very reliable HTML structure)
-  const lqGames = await getCsDataFromLiquipedia();
-  const lqRes = processCsGames(lqGames, 'Using Liquipedia Fallback');
-  if (lqRes) return lqRes;
-
-  // 3. HLTV Official RSS Feed (Bulletproof against Cloudflare)
-  const rssGames = await getCsDataFromHltvRss();
-  const rssRes = processCsGames(rssGames, 'Using HLTV RSS Fallback');
-  if (rssRes) return rssRes;
-
-  // 4. Bo3.gg JSON API
-  const bo3Games = await getCsDataFromBo3();
-  const bo3Res = processCsGames(bo3Games, 'Using Bo3.gg Fallback');
-  if (bo3Res) return bo3Res;
-
-  return { games: [], upcoming: [], warning: 'All CS2 data sources failed to load' };
 }
 
 '@
-    $src = $src.Replace($oldFunc, $newCode)
+    $src = $src.Replace($oldFunc, $newFunc)
     [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully patched CS2 Fallbacks!" -ForegroundColor Green
+    Write-Host "-> Successfully patched LoL fetching logic to fix Lambda caching bounces!" -ForegroundColor Green
 } else {
-    Write-Error "Could not find the target CS2 block. Ensure the file hasn't been heavily modified."
+    Write-Error "Could not find fetchLolStats block"
 }
