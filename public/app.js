@@ -128,9 +128,18 @@ function renderTrackedMatch(sportKey, data) {
   ss.statusEl.textContent = `${data.league || ''} ${BULLET} ${data.status || ''}${seriesPart}`;
 
   // Clock line: game elapsed time, then kills on same line if available
-  let clockLine = data.gameTime || data.clock || formatPacificTime(data.startTime);
-  if (data.kills) clockLine += `  |  ${data.kills}`;
-  ss.clockEl.textContent = clockLine;
+  let clockHtml = '';
+  if (isLiveStatus(data.status) && (data.gameTime || data.clock)) {
+      const timer = data.gameTime || data.clock;
+      const killStr = data.kills ? `<span style="margin-left:8px; padding-left:8px; border-left:1px solid var(--line); color:var(--text);">&#9876;&#xFE0F; ${data.kills}</span>` : '';
+      
+      const isError = timer.includes('[DEBUG]');
+      const color = isError ? 'var(--error)' : 'var(--live)';
+      
+      clockHtml += `<div style="font-weight:700; color:${color}; margin-top:6px; margin-bottom:2px; font-size:1.05em;">${timer}${killStr}</div>`;
+  }
+  clockHtml += `<div style="margin-top:2px; font-size:0.85em; color:var(--muted);">${formatPacificTime(data.startTime)}</div>`;
+  ss.clockEl.innerHTML = clockHtml;
 }
 
 async function fetchTrack(sportKey, query, silent = false) {
