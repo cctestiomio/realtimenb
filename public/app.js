@@ -201,7 +201,8 @@ function buildChip(sportKey, game) {
          content = clockText ? `${game.label} ${BULLET} ${clockText} ${BULLET} LIVE` : `${game.label} ${BULLET} LIVE`;
      } else {
          const timeStr = game.clock || 'LIVE';
-         content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+         const startStr = formatPacificTime(game.startTime);
+             content = `${game.label} ${BULLET} ${startStr} ${BULLET} ${timeStr}`;
      }
   } else {
      const timeStr = formatPacificTime(game.startTime);
