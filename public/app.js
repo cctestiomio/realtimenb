@@ -93,8 +93,6 @@ function clearPolling(ss) {
 }
 
 function startCountdown(ss, clockStr) {
-  if (ss.countdownTimer) clearInterval(ss.countdownTimer);
-
   const parts = clockStr.split(BULLET).map(s => s.trim());
   if (parts.length < 2) return;
 
@@ -107,29 +105,69 @@ function startCountdown(ss, clockStr) {
 
   let min = parseInt(match[1], 10);
   let sec = parseInt(match[2], 10);
-  // If ms is 2 digits (e.g. "00"), treat as centiseconds.
   let msVal = match[3] || '0';
-  // Pad to 3 digits to get milliseconds
   let ms = parseInt(msVal.padEnd(3, '0').slice(0, 3), 10);
 
   let totalMs = (min * 60 * 1000) + (sec * 1000) + ms;
-  const tickRate = 100;
 
-  ss.countdownTimer = setInterval(() => {
-    totalMs -= tickRate;
-    if (totalMs <= 0) {
-      totalMs = 0;
+  // Don't restart if close to current
+  if (ss.countdownTimer && ss.lastTotalMs) {
+      const diff = Math.abs(ss.lastTotalMs - totalMs);
+      if (diff < 2000) {
+          // Continue existing timer, but update prefix/style if needed?
+          // For now, just trust the timer.
+          return;
+      }
+  }
+
+  if (ss.countdownTimer) clearInterval(ss.countdownTimer);
+
+  const tickRate = 1000; // Update every second to avoid decimal jitter unless needed
+  const showDecimals = !!match[3] || totalMs < 60000; // Show decimals if original had them or < 1 min?
+  // User asked for 3:51 -> 3:50. Let's stick to MM:SS unless original had decimals.
+  // Actually, if original had decimals, we should probably tick faster.
+
+  const useFastTick = !!match[3] || totalMs < 60000;
+  const interval = useFastTick ? 100 : 1000;
+
+  ss.lastTotalMs = totalMs;
+
+  const update = () => {
+    ss.lastTotalMs -= interval;
+    if (ss.lastTotalMs <= 0) ss.lastTotalMs = 0;
+
+    const t = ss.lastTotalMs;
+    const m = Math.floor(t / 60000);
+    const s = Math.floor((t % 60000) / 1000);
+    const centi = Math.floor((t % 1000) / 10);
+
+    let formatted;
+    if (useFastTick) {
+        formatted = `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`;
+    } else {
+        formatted = `${m}:${String(s).padStart(2, '0')}`;
+    }
+    ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
+
+    if (t <= 0) {
       clearInterval(ss.countdownTimer);
       ss.countdownTimer = null;
     }
+  };
 
-    const m = Math.floor(totalMs / 60000);
-    const s = Math.floor((totalMs % 60000) / 1000);
-    const centi = Math.floor((totalMs % 1000) / 10);
+  // Initial render
+  // update(); // Don't update immediately, let the interval handle it to avoid jump?
+  // Actually we should render immediately because renderTrackedMatch might have cleared it or we want to show *our* formatted time.
+  const t = totalMs;
+  const m = Math.floor(t / 60000);
+  const s = Math.floor((t % 60000) / 1000);
+  const centi = Math.floor((t % 1000) / 10);
+  let formatted = useFastTick
+      ? `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}`;
+  ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
 
-    const formatted = `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`;
-    ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
-  }, tickRate);
+  ss.countdownTimer = setInterval(update, interval);
 }
 
 function renderTrackedMatch(sportKey, data) {
@@ -141,26 +179,32 @@ function renderTrackedMatch(sportKey, data) {
   if (sportKey === 'nba') {
     renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(ss.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
-    ss.statusEl.textContent = data.status;
+
+    // Clean up status if it looks like time (redundant with clock)
+    let cleanStatus = data.status;
+    if (/\d+:\d+/.test(cleanStatus) || /ET$/i.test(cleanStatus)) {
+        cleanStatus = '';
+    }
+    ss.statusEl.textContent = cleanStatus;
 
     // If live/active, don't show the start time, just the clock
     const isLive = isLiveStatus(data.status) || /Q\d|OT|Half/i.test(data.clock);
     const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
-    ss.clockEl.textContent  = `${data.clock || ''}${timeInfo}`;
 
-    if (isLive) {
-      // Clear duplicate status if it's already in the clock text or looks like a time string
-      if (data.clock && (data.clock.includes(data.status) || /\d+:\d+/.test(data.status))) {
-        ss.statusEl.textContent = '';
-      }
+    // If not live, show clock + time info directly.
+    // If live, let startCountdown handle the clock text to prevent jitter/overwrite.
+    if (!isLive) {
+       ss.clockEl.textContent  = `${data.clock || ''}${timeInfo}`;
+       if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
+    } else {
       // Start countdown if we have a valid clock string
       if (data.clock && /\d+:\d+/.test(data.clock)) {
         startCountdown(ss, data.clock);
-      } else if (ss.countdownTimer) {
-        clearInterval(ss.countdownTimer); ss.countdownTimer = null;
+      } else {
+        // Fallback if clock is "Halftime" or something without digits
+        ss.clockEl.textContent = data.clock;
+        if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
       }
-    } else {
-      if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
     }
     return;
   }
