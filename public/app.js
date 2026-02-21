@@ -232,12 +232,11 @@ function buildChip(sportKey, game) {
   if (live) {
      if (sportKey === 'nba') {
          // User requested: "MIA @ ATL • Q1 4:34 • LIVE"
-         const clock = game.clock || 'LIVE';
-         // If clock is same as status, don't duplicate
-         if (clock === 'LIVE') {
-             content = `${game.label} ${BULLET} LIVE`;
-         } else {
+         const clock = game.clock && game.clock.toLowerCase() !== 'live' ? game.clock : '';
+         if (clock) {
              content = `${game.label} ${BULLET} ${clock} ${BULLET} LIVE`;
+         } else {
+             content = `${game.label} ${BULLET} LIVE`;
          }
      } else {
          const timeStr = game.clock || 'LIVE';

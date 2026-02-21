@@ -56,7 +56,13 @@ const server = http.createServer(async (req, res) => {
       const query = String(url.searchParams.get('query') || '').trim();
       if (!query) return sendJson(res, 400, { error: 'Missing query' });
 
-      const match = provider.pick(data, query);
+      let match = null;
+      try {
+        match = provider.pick(data, query);
+      } catch (e) {
+        console.error('Pick error:', e);
+      }
+
       if (!match) {
         return sendJson(res, 404, {
           error: `No game found for "${query}"`,
