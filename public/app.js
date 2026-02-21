@@ -8,7 +8,7 @@ const sports = [
   { key: 'valorant', label: 'VALORANT Esports' }
 ];
 
-const TRACK_POLL_MS      = 1000;
+const TRACK_POLL_MS      = 5000;
 const REQUEST_TIMEOUT_MS = 8000;
 const BULLET             = '\u2022';
 
@@ -97,7 +97,7 @@ function updateStreamButton(ss, match) {
 }
 
 function clearPolling(ss) {
-  if (ss.pollTimer) { clearInterval(ss.pollTimer); ss.pollTimer = null; }
+  if (ss.pollTimer) { clearTimeout(ss.pollTimer); ss.pollTimer = null; }
   if (ss.tickTimer) { clearInterval(ss.tickTimer); ss.tickTimer = null; }
 }
 
@@ -213,8 +213,15 @@ function startTracking(sportKey, query) {
   ss.clockEl.textContent  = '';
   updateStreamButton(ss, null);
   setActiveChip(sportKey, query);
-  fetchTrack(sportKey, query, false);
-  ss.pollTimer = setInterval(() => fetchTrack(sportKey, ss.currentQuery, true), TRACK_POLL_MS);
+    const poll = async () => {
+    if (ss.currentQuery !== query) return;
+    await fetchTrack(sportKey, query, true);
+    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
+  };
+  
+  fetchTrack(sportKey, query, false).then(() => {
+    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
+  });
 }
 
 // â”€â”€ Chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -231,10 +238,12 @@ function buildChip(sportKey, game) {
 
   if (live) {
      if (sportKey === 'nba') {
-         // User requested: "MIA @ ATL • Q1 4:34 • LIVE"
-         const clock = game.clock && game.clock.toLowerCase() !== 'live' ? game.clock : '';
-         if (clock) {
-             content = `${game.label} ${BULLET} ${clock} ${BULLET} LIVE`;
+         let clockText = (game.clock || '').trim();
+         if (clockText.toLowerCase() === 'live') {
+             clockText = '';
+         }
+         if (clockText) {
+             content = `${game.label} ${BULLET} ${clockText} ${BULLET} LIVE`;
          } else {
              content = `${game.label} ${BULLET} LIVE`;
          }
@@ -243,12 +252,11 @@ function buildChip(sportKey, game) {
          content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
      }
   } else {
-     // Scheduled
      const timeStr = formatPacificTime(game.startTime);
      content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
   }
 
-  btn.textContent = content;
+  btn.textContent = content.replace(/\s+/g, ' ').trim();
   btn.addEventListener('click', () => {
     const ss = state.get(sportKey);
     if (ss) ss.input.value = game.label;

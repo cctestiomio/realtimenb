@@ -1,75 +1,100 @@
 <#
 .SYNOPSIS
-    Automated Remediation Script for Esports Dashboard UI (DOM Manipulation)
+    Automated Remediation Script for app.js Polling and Display Issues
 
 .DESCRIPTION
-    This script parses a target HTML, PHP, or JSX component file. It performs a targeted regex 
-    substitution to actively remove rogue 'onclick' navigation handlers pointing to Twitch, 
-    and subsequently extracts and relocates the entire Stats Scoreboard DOM component 
-    to reside semantically between the Active Games and Upcoming Games containers.
-
-.NOTES
-    Ensure the $FilePath variable accurately points to the target source code file.
-    Always implement version control backups of the source file prior to execution.
+    This script parses public/app.js. It performs regex substitution to:
+    1. Increase the tracking poll interval from 1000ms to 5000ms.
+    2. Convert overlapping setInterval calls to safe recursive setTimeout promises.
+    3. Update the `buildChip` UI function to show actual live clock times for the NBA.
 #>
 
-# Define the absolute or relative target file path (Update this to point to the actual UI file)
-$FilePath = ".\dashboard_view.html"
+$FilePath = ".\public\app.js"
 
-# Verify file existence before proceeding to prevent null reference exceptions and pipeline failures
 if (-Not (Test-Path $FilePath)) {
     Write-Error "CRITICAL: Target file not found at path: $FilePath. Execution aborted."
     exit
 }
 
-# 1. Ingest the file content as a single multiline string utilizing the -Raw parameter
 $Content = Get-Content -Path $FilePath -Raw
 
 # =====================================================================
-# PHASE 1: Eradicate Rogue Navigation Handlers
+# PHASE 1: Fix Polling Interval & Overlapping Intervals
 # =====================================================================
 
-# FIX: Escaped the single quotes inside the character classes -> [^"'']
-$TwitchClickPattern = '(?i)\s*onclick\s*=\s*["''][^"'']*twitch\.tv[^"'']*["'']'
-$Content = $Content -replace $TwitchClickPattern, ''
+# 1A. Increase tracking poll ms to 5000
+$Content = $Content -replace 'const TRACK_POLL_MS\s*=\s*1000;', 'const TRACK_POLL_MS      = 5000;'
 
-# FIX: Escaped the single quotes here as well
-$TwitchHrefPattern = '(?i)\s*href\s*=\s*["''][^"'']*twitch\.tv[^"'']*["'']'
-$Content = $Content -replace $TwitchHrefPattern, ''
+# 1B. Fix the clearPolling method to use clearTimeout for pollTimer
+$Content = $Content -replace 'clearInterval\(ss\.pollTimer\);', 'clearTimeout(ss.pollTimer);'
 
-Write-Output "Phase 1 Complete: Eradicated rogue Twitch navigation handlers."
-
-# =====================================================================
-# PHASE 2: Relocate the Stats Scoreboard Component
-# =====================================================================
-# The objective is to move <div id="stats-scoreboard"> to sit immediately
-# after the <div id="active-games"> block and before the <div id="upcoming-games"> block.
-
-# Step 2A: Extract the entire Stats Scoreboard node into system memory.
-$ScoreboardRegex = '(?s)(<div\s+id=["'']stats-scoreboard["''].*?</div>\s*)'
-
-if ($Content -match $ScoreboardRegex) {
-    # FIX: Isolated the matched HTML block string (Capture Group 1) instead of the whole HashTable
-    $ScoreboardHTML = $Matches[1]
-    
-    # Step 2B: Excise the scoreboard block entirely from its original, incorrect location.
-    $Content = $Content -replace $ScoreboardRegex, ''
-    
-    # Step 2C: Locate the Active Games container and inject the Scoreboard immediately after it.
-    $ActiveGamesRegex = '(?s)(<div\s+id=["'']active-games["''].*?</div>\s*)'
-    
-    # The replacement string injects the original Active Games block ($1) followed immediately by the Scoreboard string.
-    $Content = $Content -replace $ActiveGamesRegex, "`$1`n$ScoreboardHTML"
-    
-    Write-Output "Phase 2 Complete: Successfully extracted and relocated the Stats Scoreboard component."
-} else {
-    Write-Warning "Phase 2 Failed: Stats Scoreboard component ID not found or regex match failed. Skipping DOM relocation."
+# 1C. Convert startTracking from overlapping setInterval to a safe recursive setTimeout
+$oldStartTracking = '(?s)fetchTrack\(sportKey, query, false\);\s*ss\.pollTimer = setInterval\(\(\) => fetchTrack\(sportKey, ss\.currentQuery, true\), TRACK_POLL_MS\);\s*}'
+$newStartTracking = @'
+  const poll = async () => {
+    if (ss.currentQuery !== query) return;
+    await fetchTrack(sportKey, query, true);
+    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
+  };
+  
+  fetchTrack(sportKey, query, false).then(() => {
+    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
+  });
 }
+'@
+$Content = $Content -replace $oldStartTracking, $newStartTracking
+
+# =====================================================================
+# PHASE 2: Fix NBA Live Display format inside buildChip
+# =====================================================================
+
+$oldBuildChip = '(?s)function buildChip\(sportKey, game\).*?return btn;\s*}'
+$newBuildChip = @'
+function buildChip(sportKey, game) {
+  const live = isLiveStatus(game.status);
+  const btn  = document.createElement('button');
+  btn.type      = 'button';
+  btn.className = `game-chip${live ? ' chip-live' : ''}`;
+  btn.dataset.label = game.label;
+
+  let content = '';
+
+  if (live) {
+     if (sportKey === 'nba') {
+         let clockText = (game.clock || '').trim();
+         if (clockText.toLowerCase() === 'live') {
+             clockText = '';
+         }
+         if (clockText) {
+             content = `${game.label} ${BULLET} ${clockText} ${BULLET} LIVE`;
+         } else {
+             content = `${game.label} ${BULLET} LIVE`;
+         }
+     } else {
+         const timeStr = game.clock || 'LIVE';
+         content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+     }
+  } else {
+     const timeStr = formatPacificTime(game.startTime);
+     content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+  }
+
+  btn.textContent = content.replace(/\s+/g, ' ').trim();
+  btn.addEventListener('click', () => {
+    const ss = state.get(sportKey);
+    if (ss) ss.input.value = game.label;
+    startTracking(sportKey, game.label);
+  });
+  return btn;
+}
+'@
+
+$Content = $Content -replace $oldBuildChip, $newBuildChip
 
 # =====================================================================
 # PHASE 3: Write Output to Disk
 # =====================================================================
-# Pipe the heavily modified multiline string back to the file system, overwriting the original file.
+
 $Content | Set-Content -Path $FilePath -NoNewline
 
-Write-Output "Remediation script execution successfully completed. Please review the modified file."
+Write-Output "Remediation complete. public/app.js has been successfully updated."
