@@ -24,18 +24,23 @@ function updateGlobalRefresh() {
   const h = d.getHours() % 12 || 12;
   const m = String(d.getMinutes()).padStart(2, '0');
   const s = String(d.getSeconds()).padStart(2, '0');
-  const ms = String(d.getMilliseconds()).padStart(3, '0').slice(0, 2); // 2 digits
+  const ms = String(d.getMilliseconds()).padStart(3, '0').slice(0, 2);
   const ampm = d.getHours() >= 12 ? 'pm' : 'am';
   globalRefreshEl.textContent = `Refreshed at: ${h}:${m}:${s}:${ms} ${ampm}`;
 }
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const isLiveStatus = (s = '') => /\b(live|inprogress|in.?progress|ongoing|halftime)\b/i.test(s);
 
 function formatPacificTime(isoValue) {
   if (!isoValue) return 'TBD';
   let date;
-  try { date = new Date(isoValue); } catch { return 'TBD'; }
+  try {
+      // Ensure ISO string is treated as UTC if no timezone specified
+      if (typeof isoValue === 'string' && !isoValue.endsWith('Z') && !isoValue.includes('+') && !isoValue.includes('-')) {
+          isoValue += 'Z';
+      }
+      date = new Date(isoValue);
+  } catch { return 'TBD'; }
   if (!date || Number.isNaN(date.getTime())) return 'TBD';
   return new Intl.DateTimeFormat('en-US', {
     month: 'short', day: 'numeric',
@@ -79,12 +84,16 @@ function setActiveChip(sportKey, label) {
     chip.classList.toggle('active', chip.dataset.label === label);
 }
 
-function updateLolStreamButton(ss, match) {
+function updateStreamButton(ss, match) {
   if (!ss?.streamRow || !ss?.streamBtn) return;
   const url = typeof match?.streamUrl === 'string' ? match.streamUrl.trim() : '';
   ss.streamRow.hidden   = !url;
   ss.streamBtn.disabled = !url;
-  ss.streamBtn.dataset.url = url;
+  // Remove old listeners to avoid duplicates?
+  // Easier to just set onclick property which overwrites.
+  ss.streamBtn.onclick = () => {
+     if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  };
 }
 
 function clearPolling(ss) {
@@ -97,43 +106,39 @@ function renderTrackedMatch(sportKey, data) {
   if (!ss) return;
 
   updateGlobalRefresh();
+  updateStreamButton(ss, data);
 
   if (sportKey === 'nba') {
     renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(ss.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
 
-    // Status cleanup: if status duplicates clock (e.g. Final), hide it or clock.
-    // Provider now returns "Live", "Final", or "Scheduled".
     let cleanStatus = data.status;
     let clockText   = data.clock || '';
 
-    // If status is Final and clock is Final, just show status
     if (cleanStatus === 'Final' && clockText === 'Final') {
         clockText = '';
     }
-    // If status is Live, and clock has content, just show clock + status?
-    // User wants no duplicates.
-    // If cleanStatus is "Live", and clock is "Q3 ...", that's fine.
 
     ss.statusEl.textContent = cleanStatus;
 
-    // If live/active, don't show the start time in clock
     const isLive = isLiveStatus(data.status) || /Q\d|OT|Half|Live/i.test(data.status);
+    // Only show Start Time if NOT live
     const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
 
-    const displayClock = `${clockText}${timeInfo}`;
+    // Clean up displayClock if clockText is empty (avoid leading bullet)
+    let displayClock = `${clockText}${timeInfo}`;
+    if (!clockText && displayClock.startsWith(` ${BULLET} `)) {
+        displayClock = displayClock.replace(` ${BULLET} `, '');
+    }
     ss.clockEl.textContent = displayClock;
 
     // Countdown Logic for NBA
     if (ss.tickTimer) { clearInterval(ss.tickTimer); ss.tickTimer = null; }
 
-    // Check if we can countdown: must be live, not halftime, and contain a time "M:SS"
     if (isLive && /\d+:\d+/.test(clockText) && !/Half|End|Final/i.test(clockText)) {
-        // Parse time. Last occurrence of D:DD
         const matches = clockText.match(/(\d+):(\d+)(?:\.(\d+))?/g);
         if (matches) {
             const lastTime = matches[matches.length - 1];
-            // Split into components
             const mPart = lastTime.match(/(\d+):(\d+)(?:\.(\d+))?/);
             if (mPart) {
                 let minutes = parseInt(mPart[1], 10);
@@ -151,25 +156,31 @@ function renderTrackedMatch(sportKey, data) {
                             return;
                         }
                     }
-                    // Reconstruct string
                     const newTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
-                    // Replace the time in the display string
+                    // Replace specifically the last time occurrence
+                    // We need to be careful not to replace Q1 (if it was Q10?)
+                    // Just replace the string we found.
                     ss.clockEl.textContent = displayClock.replace(lastTime, newTime);
                 }, 1000);
             }
         }
     }
-
     return;
   }
 
+  // Generic Esports Render
   const parts = String(data.label || 'TBD vs TBD').split(/\s+vs\s+/i);
   let [s1, s2] = String(data.score || '').split('|');
   if (s2 === undefined) [s1, s2] = String(data.score || '').split('-');
+
+  // Format score to be nicer if map details exist
+  // data.score might be "0-0 (Map: 13-9)"
+
   renderTeam(ss.awayEl, parts[0] || 'TBD', '', s1 || '-');
   renderTeam(ss.homeEl, parts[1] || 'TBD', '', s2 || '-');
+
   ss.statusEl.textContent = `${data.league || ''} ${BULLET} ${data.status || ''}`;
-  ss.clockEl.textContent  = `${data.clock || formatPacificTime(data.startTime)} ${BULLET} ${data.matchId || ''}`;
+  ss.clockEl.textContent  = `${data.clock || formatPacificTime(data.startTime)}`;
 }
 
 // â”€â”€ Fetch + Poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -185,7 +196,6 @@ async function fetchTrack(sportKey, query, silent = false) {
       return;
     }
     renderTrackedMatch(sportKey, payload.match);
-    if (sportKey === 'lol') updateLolStreamButton(ss, payload.match);
     ss.helpEl.textContent  = payload.warning ? `Fallback: ${payload.warning}` : 'Upcoming in next 12 hours:';
     ss.errorEl.textContent = '';
   } catch {
@@ -201,7 +211,7 @@ function startTracking(sportKey, query) {
   ss.scoreEl.hidden       = false;
   ss.statusEl.textContent = 'Loading\u2026';
   ss.clockEl.textContent  = '';
-  if (sportKey === 'lol') updateLolStreamButton(ss, null);
+  updateStreamButton(ss, null);
   setActiveChip(sportKey, query);
   fetchTrack(sportKey, query, false);
   ss.pollTimer = setInterval(() => fetchTrack(sportKey, ss.currentQuery, true), TRACK_POLL_MS);
@@ -216,8 +226,30 @@ function buildChip(sportKey, game) {
   btn.type      = 'button';
   btn.className = `game-chip${live ? ' chip-live' : ''}`;
   btn.dataset.label = game.label;
-  const timeStr = live ? 'LIVE' : formatPacificTime(game.startTime);
-  btn.textContent = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+
+  let content = '';
+
+  if (live) {
+     if (sportKey === 'nba') {
+         // User requested: "MIA @ ATL • Q1 4:34 • LIVE"
+         const clock = game.clock || 'LIVE';
+         // If clock is same as status, don't duplicate
+         if (clock === 'LIVE') {
+             content = `${game.label} ${BULLET} LIVE`;
+         } else {
+             content = `${game.label} ${BULLET} ${clock} ${BULLET} LIVE`;
+         }
+     } else {
+         const timeStr = game.clock || 'LIVE';
+         content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+     }
+  } else {
+     // Scheduled
+     const timeStr = formatPacificTime(game.startTime);
+     content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+  }
+
+  btn.textContent = content;
   btn.addEventListener('click', () => {
     const ss = state.get(sportKey);
     if (ss) ss.input.value = game.label;
@@ -243,20 +275,14 @@ async function loadSportData(sportKey) {
     ss.upcomingEl.innerHTML = '';
     ss.allEl.innerHTML      = '';
 
-    // Using global refresher now, but can keep this or remove it.
-    // User asked for "at the top", so global is primary.
-    if (ss.refreshTimeEl) {
-        ss.refreshTimeEl.textContent = ''; // Hide per-card refresh
-    }
+    if (ss.refreshTimeEl) ss.refreshTimeEl.textContent = '';
     updateGlobalRefresh();
 
-    // Separate: live | upcoming (not live) | rest
     const liveGames     = data.games.filter((g) => isLiveStatus(g.status));
     const upcomingGames = (data.upcoming || []).filter((g) => !isLiveStatus(g.status));
     const usedIds       = new Set([...liveGames, ...upcomingGames].map(gameIdentity));
     const restGames     = data.games.filter((g) => !usedIds.has(gameIdentity(g))).slice(0, 20);
 
-    // Live section
     if (liveGames.length) {
       ss.liveHeaderEl.hidden = false;
       for (const g of liveGames) ss.liveEl.appendChild(buildChip(sportKey, g));
@@ -264,7 +290,6 @@ async function loadSportData(sportKey) {
       ss.liveHeaderEl.hidden = true;
     }
 
-    // Upcoming section
     if (upcomingGames.length) {
       for (const g of upcomingGames) ss.upcomingEl.appendChild(buildChip(sportKey, g));
     } else if (!liveGames.length) {
@@ -274,14 +299,8 @@ async function loadSportData(sportKey) {
       ss.upcomingEl.appendChild(p);
     }
 
-    // Scheduled rest
-    // User requested "Only include matches upcoming matches 12 hours from now"
-    // So we will HIDE restGames strictly.
-    // Use this section only if we want to show everything.
-    // for (const g of restGames) ss.allEl.appendChild(buildChip(sportKey, g));
-
-    // Auto-track: live first, then upcoming, then scheduled
-    const autoTrack = liveGames[0] || upcomingGames[0] || restGames[0];
+    // Auto-track priority
+    const autoTrack = liveGames[0] || upcomingGames[0];
     if (autoTrack) {
       ss.input.value = autoTrack.label;
       startTracking(sportKey, autoTrack.label);
@@ -314,14 +333,8 @@ function mountSportSection(sport) {
   const errorEl      = root.querySelector('[data-error]');
   const refreshTimeEl = root.querySelector('[data-refresh-time]');
 
-  if (sport.key === 'lol') {
-    streamRow.hidden   = false;
-    streamBtn.disabled = true;
-    streamBtn.addEventListener('click', () => {
-      const url = streamBtn.dataset.url;
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    });
-  }
+  // Initialize stream button as hidden
+  streamRow.hidden = true;
 
   state.set(sport.key, {
     root, form, input, helpEl, liveHeaderEl, liveEl,

@@ -10,5 +10,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "jsdom": "^28.1.0",
+    "node-fetch": "^3.3.2"
   }
 }
