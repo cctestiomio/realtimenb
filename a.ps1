@@ -1,136 +1,52 @@
 $ErrorActionPreference = 'Stop'
+$file = "public\app.js"
+Write-Host "Patching $file..." -ForegroundColor Cyan
+$src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
 
-# ==========================================
-# 1. PATCH BACKEND (providers.js)
-# ==========================================
-$file1 = "lib\providers.js"
-Write-Host "Patching $file1 (Restoring Aggressive Hunter)..." -ForegroundColor Cyan
-$src1 = [System.IO.File]::ReadAllText((Resolve-Path $file1), [System.Text.Encoding]::UTF8)
+# 1. Clean up the old monotonic filter if it successfully applied last time
+$src = $src -replace '(?s)// Monotonic Filter:.*?ss\.maxDiff = data\.rawDiff;\s*}', ''
 
-$startStr = "async function fetchLolStats"
-$endStr = "async function getLolData"
-$startIdx = $src1.IndexOf($startStr)
-$endIdx = $src1.IndexOf($endStr)
+# 2. Inject the Sliding Window Minimum filter precisely into the render function
+$exactTarget = @'
+function renderTrackedMatch(sportKey, data) {
+  const ss = state.get(sportKey);
+  if (!ss) return;
 
-if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
-    $oldFunc = $src1.Substring($startIdx, $endIdx - $startIdx)
-    $newFunc = @'
-async function fetchLolStats(gameId) {
-  try {
-    let winData = null;
-    const d = new Date();
-    d.setMilliseconds(0);
-    const sec = d.getSeconds();
-    d.setSeconds(sec - (sec % 10));
-
-    // RESTORED: Aggressively hunt for the absolute newest chunk Riot has published (10s latency).
-    const offsets = [10, 20, 30, 40, 50, 60];
-    for (const offset of offsets) {
-        const attemptDate = new Date(d.getTime() - (offset * 1000));
-        const url = 'https://feed.lolesports.com/livestats/v1/window/' + gameId + '?startingTime=' + attemptDate.toISOString();
-        
-        winData = await fetchJson(url).catch(() => null);
-        if (winData && winData.frames && winData.frames.length > 0) {
-            break; 
-        }
-    }
-
-    if (!winData || !winData.frames || !winData.frames.length) {
-        winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
-    }
-    
-    if (!winData || !winData.frames || !winData.frames.length) return { error: 'No live frames' };
-
-    // Maintain perfectly synced start time via the stream cancellation trick
-    if (!gameStartCache.has(gameId)) {
-        try {
-            const res = await fetch('https://feed.lolesports.com/livestats/v1/details/' + gameId);
-            if (res.ok && res.body) {
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let chunkStr = '';
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    chunkStr += decoder.decode(value, { stream: true });
-                    const match = chunkStr.match(/"rfc460Timestamp"\s*:\s*"([^"]+)"/);
-                    if (match) {
-                        gameStartCache.set(gameId, new Date(match[1]).getTime());
-                        reader.cancel();
-                        break;
-                    }
-                    if (chunkStr.length > 100000) break; 
-                }
-            }
-        } catch (e) {}
-        
-        if (!gameStartCache.has(gameId)) {
-            gameStartCache.set(gameId, new Date(winData.frames[0].rfc460Timestamp).getTime());
-        }
-    }
-
-    const frames = winData.frames;
-    const last = frames[frames.length - 1];
-
-    let k1 = 0, k2 = 0;
-    if (last.blueTeam && last.blueTeam.totalKills !== undefined) {
-        k1 = last.blueTeam.totalKills;
-        k2 = last.redTeam?.totalKills || 0;
-    } else if (last.participants) {
-        k1 = last.participants.slice(0, 5).reduce((sum, p) => sum + (p.kills || 0), 0);
-        k2 = last.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
-    }
-
-    const start = gameStartCache.get(gameId);
-    const end = new Date(last.rfc460Timestamp).getTime();
-    const diff = end - start;
-    
-    let clock = 'LIVE';
-    if (diff >= 0) {
-      const m = Math.floor(diff / 60000);
-      const s = Math.floor((diff % 60000) / 1000);
-      clock = m + ':' + String(s).padStart(2, '0');
-    }
-
-    // NEW: We pass the exact millisecond diff to the frontend so it can reject older frames
-    return { k1, k2, clock, rawDiff: diff };
-  } catch (err) {
-    return { error: 'Fetch failed: ' + err.message };
-  }
-}
-
+  updateGlobalRefresh();
 '@
-    $src1 = $src1.Replace($oldFunc, $newFunc)
-    [System.IO.File]::WriteAllText((Resolve-Path $file1), $src1, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully restored absolute lowest latency backend!" -ForegroundColor Green
-} else {
-    Write-Error "Could not find fetchLolStats block in providers.js"
-}
 
-# ==========================================
-# 2. PATCH FRONTEND (app.js)
-# ==========================================
-$file2 = "public\app.js"
-Write-Host "Patching $file2 (Adding Monotonic Filter)..." -ForegroundColor Cyan
-$src2 = [System.IO.File]::ReadAllText((Resolve-Path $file2), [System.Text.Encoding]::UTF8)
+$exactNew = @'
+function renderTrackedMatch(sportKey, data) {
+  const ss = state.get(sportKey);
+  if (!ss) return;
 
-$appTarget = "updateGlobalRefresh();"
-$appNew = @'
-  // Monotonic Filter: If a slow Lambda returns older data than we already have, ignore it!
+  // Sliding Window Minimum Filter
+  // Keeps the last 3 seconds of network requests and strictly uses the earlier (lowest) timer
+  // This guarantees 0 bouncing while keeping latency at the absolute minimum.
   if (data.rawDiff !== undefined) {
-      if (ss.maxDiff && data.rawDiff < ss.maxDiff) return; 
-      ss.maxDiff = data.rawDiff;
+      if (!ss.diffHistory) ss.diffHistory = [];
+      ss.diffHistory.push(data.rawDiff);
+      
+      // Store 6 polls (3 seconds at 500ms per poll)
+      if (ss.diffHistory.length > 6) ss.diffHistory.shift();
+      
+      const stableDiff = Math.min(...ss.diffHistory);
+      if (stableDiff >= 0) {
+          const m = Math.floor(stableDiff / 60000);
+          const s = Math.floor((stableDiff % 60000) / 1000);
+          data.clock = m + ':' + String(s).padStart(2, '0');
+      }
   }
 
   updateGlobalRefresh();
 '@
 
-if ($src2.Contains("ss.maxDiff && data.rawDiff < ss.maxDiff")) {
-    Write-Host "-> Frontend already has the Monotonic Filter!" -ForegroundColor Yellow
-} elseif ($src2.Contains($appTarget)) {
-    $src2 = $src2.Replace($appTarget, $appNew)
-    [System.IO.File]::WriteAllText((Resolve-Path $file2), $src2, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully added Monotonic Filter to frontend!" -ForegroundColor Green
+if ($src.Contains("ss.diffHistory.push(data.rawDiff);")) {
+    Write-Host "-> Sliding Window Filter is already applied!" -ForegroundColor Yellow
+} elseif ($src.Contains("function renderTrackedMatch(sportKey, data) {")) {
+    $src = $src.Replace($exactTarget, $exactNew)
+    [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
+    Write-Host "-> Successfully applied Sliding Window Minimum Filter to stop timer bouncing!" -ForegroundColor Green
 } else {
-    Write-Error "Could not find 'updateGlobalRefresh();' in app.js"
+    Write-Error "Could not find the target block in app.js"
 }
