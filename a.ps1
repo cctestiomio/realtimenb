@@ -1,22 +1,22 @@
 $ErrorActionPreference = 'Stop'
 
-$file = "public\app.js"
+$file = "lib\providers.js"
 Write-Host "Patching $file..." -ForegroundColor Cyan
 
 $src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
 
-# Matches the exact JS block generating the redundant "Live • LIVE" string for Esports chips
-$pattern = '(?s)(const timeStr = game\.clock \|\| ''LIVE'';\s+)content = `\$\{game\.label\} \$\{BULLET\} \$\{game\.status\} \$\{BULLET\} \$\{timeStr\}`;'
+# The exact string looking for only 'inProgress'
+$target = "const activeGame = (e.match?.games || []).find(g => g.state === 'inProgress');"
 
-# Injects the start time formatter and replaces the status variable
-$replacement = '${1}const startStr = formatPacificTime(game.startTime);' + [Environment]::NewLine + '             content = `${game.label} ${BULLET} ${startStr} ${BULLET} ${timeStr}`;'
+# The replacement string adding 'unstarted' as a valid state
+$replacement = "const activeGame = (e.match?.games || []).find(g => g.state === 'inProgress' || g.state === 'unstarted');"
 
-if ($src -match $pattern) {
-    $src = $src -replace $pattern, $replacement
+if ($src.Contains($target)) {
+    $src = $src.Replace($target, $replacement)
     [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully patched redundant Live tags in public/app.js!" -ForegroundColor Green
+    Write-Host "-> Successfully patched LoL game state detection in lib/providers.js!" -ForegroundColor Green
 } else {
     Write-Warning "-> Target string not found. It may have already been patched."
 }
 
-Write-Host "`nDone! Just refresh your browser (no need to restart the server)." -ForegroundColor Yellow
+Write-Host "`nDone! Restart your dev server (if not using click.bat) to apply the backend changes." -ForegroundColor Yellow
