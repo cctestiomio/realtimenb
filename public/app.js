@@ -89,6 +89,7 @@ function updateLolStreamButton(ss, match) {
 
 function clearPolling(ss) {
   if (ss.pollTimer) { clearInterval(ss.pollTimer); ss.pollTimer = null; }
+  if (ss.tickTimer) { clearInterval(ss.tickTimer); ss.tickTimer = null; }
 }
 
 function renderTrackedMatch(sportKey, data) {
@@ -101,19 +102,64 @@ function renderTrackedMatch(sportKey, data) {
     renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
     renderTeam(ss.homeEl, `${data.home.city} ${data.home.name}`, data.home.code, data.home.score);
 
-    // Clean up status if it looks like time (redundant with clock)
+    // Status cleanup: if status duplicates clock (e.g. Final), hide it or clock.
+    // Provider now returns "Live", "Final", or "Scheduled".
     let cleanStatus = data.status;
-    if (/\d+:\d+/.test(cleanStatus) || /ET$/i.test(cleanStatus)) {
-        cleanStatus = '';
+    let clockText   = data.clock || '';
+
+    // If status is Final and clock is Final, just show status
+    if (cleanStatus === 'Final' && clockText === 'Final') {
+        clockText = '';
     }
+    // If status is Live, and clock has content, just show clock + status?
+    // User wants no duplicates.
+    // If cleanStatus is "Live", and clock is "Q3 ...", that's fine.
+
     ss.statusEl.textContent = cleanStatus;
 
-    // If live/active, don't show the start time, just the clock
-    const isLive = isLiveStatus(data.status) || /Q\d|OT|Half/i.test(data.clock);
+    // If live/active, don't show the start time in clock
+    const isLive = isLiveStatus(data.status) || /Q\d|OT|Half|Live/i.test(data.status);
     const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
 
-    // Just show the clock from API, no countdown
-    ss.clockEl.textContent = `${data.clock || ''}${timeInfo}`;
+    const displayClock = `${clockText}${timeInfo}`;
+    ss.clockEl.textContent = displayClock;
+
+    // Countdown Logic for NBA
+    if (ss.tickTimer) { clearInterval(ss.tickTimer); ss.tickTimer = null; }
+
+    // Check if we can countdown: must be live, not halftime, and contain a time "M:SS"
+    if (isLive && /\d+:\d+/.test(clockText) && !/Half|End|Final/i.test(clockText)) {
+        // Parse time. Last occurrence of D:DD
+        const matches = clockText.match(/(\d+):(\d+)(?:\.(\d+))?/g);
+        if (matches) {
+            const lastTime = matches[matches.length - 1];
+            // Split into components
+            const mPart = lastTime.match(/(\d+):(\d+)(?:\.(\d+))?/);
+            if (mPart) {
+                let minutes = parseInt(mPart[1], 10);
+                let seconds = parseInt(mPart[2], 10);
+
+                ss.tickTimer = setInterval(() => {
+                    if (seconds > 0) {
+                        seconds--;
+                    } else {
+                        if (minutes > 0) {
+                            minutes--;
+                            seconds = 59;
+                        } else {
+                            clearInterval(ss.tickTimer);
+                            return;
+                        }
+                    }
+                    // Reconstruct string
+                    const newTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
+                    // Replace the time in the display string
+                    ss.clockEl.textContent = displayClock.replace(lastTime, newTime);
+                }, 1000);
+            }
+        }
+    }
+
     return;
   }
 
