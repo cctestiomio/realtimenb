@@ -13,30 +13,37 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
     $newFunc = @"
 async function fetchLolStats(gameId) {
   try {
-    // 1. Generate the startingTime exactly like the reference github
-    // Subtract 60 seconds and round to nearest 10s multiple
+    let winData = null;
     const d = new Date();
     d.setMilliseconds(0);
     const sec = d.getSeconds();
-    d.setSeconds(sec - (sec % 10) - 60);
-    const startingTime = d.toISOString();
+    
+    // Snap to the current 10-second bucket
+    d.setSeconds(sec - (sec % 10));
 
-    const url = 'https://feed.lolesports.com/livestats/v1/window/' + gameId;
-    
-    // 2. Fetch the live window using the startingTime parameter
-    let winData = await fetchJson(url + '?startingTime=' + startingTime).catch(() => null);
-    
-    // Fallback if the game just started and 60 seconds ago doesn't exist yet
-    if (!winData || !winData.frames || !winData.frames.length) {
+    // Aggressively hunt for the absolute newest chunk Riot has published.
+    // Starts at just a 10-second delay and walks backward until it gets a hit.
+    const offsets = [10, 20, 30, 40, 50, 60];
+    for (const offset of offsets) {
+        const attemptDate = new Date(d.getTime() - (offset * 1000));
+        const url = 'https://feed.lolesports.com/livestats/v1/window/' + gameId + '?startingTime=' + attemptDate.toISOString();
+        
         winData = await fetchJson(url).catch(() => null);
+        if (winData && winData.frames && winData.frames.length > 0) {
+            break; // Found the bleeding edge chunk!
+        }
+    }
+
+    // Fallback if the game literally just started
+    if (!winData || !winData.frames || !winData.frames.length) {
+        winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
     }
     
     if (!winData || !winData.frames || !winData.frames.length) return { error: 'No live frames' };
 
-    // 3. Cache the true start time of the game to calculate the game clock
+    // Cache the true start time of the game to calculate the running game clock
     if (!gameStartCache.has(gameId)) {
-        // Fetch without startingTime to intentionally get the beginning of the match
-        const startData = await fetchJson(url).catch(() => null);
+        const startData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
         if (startData && startData.frames && startData.frames.length) {
             gameStartCache.set(gameId, new Date(startData.frames[0].rfc460Timestamp).getTime());
         } else {
@@ -47,7 +54,7 @@ async function fetchLolStats(gameId) {
     const frames = winData.frames;
     const last = frames[frames.length - 1];
 
-    // 4. Calculate Kills
+    // Calculate Kills
     let k1 = 0, k2 = 0;
     if (last.blueTeam && last.blueTeam.totalKills !== undefined) {
         k1 = last.blueTeam.totalKills;
@@ -57,7 +64,7 @@ async function fetchLolStats(gameId) {
         k2 = last.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
     }
 
-    // 5. Calculate running Game Clock
+    // Calculate running Game Clock based on the true start time
     const start = gameStartCache.get(gameId);
     const end = new Date(last.rfc460Timestamp).getTime();
     const diff = end - start;
@@ -78,7 +85,7 @@ async function fetchLolStats(gameId) {
 "@
     $src = $src.Replace($oldFunc, $newFunc)
     [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully patched LoL fetching logic with startingTime offset!" -ForegroundColor Green
+    Write-Host "-> Successfully patched LoL fetching logic to aggressive low-latency mode!" -ForegroundColor Green
 } else {
     Write-Error "Could not find fetchLolStats block"
 }
