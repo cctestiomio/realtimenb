@@ -89,85 +89,6 @@ function updateLolStreamButton(ss, match) {
 
 function clearPolling(ss) {
   if (ss.pollTimer) { clearInterval(ss.pollTimer); ss.pollTimer = null; }
-  if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
-}
-
-function startCountdown(ss, clockStr) {
-  const parts = clockStr.split(BULLET).map(s => s.trim());
-  if (parts.length < 2) return;
-
-  const prefix = parts[0];
-  const timeStr = parts[1];
-
-  // MM:SS.ms or MM:SS
-  const match = timeStr.match(/^(\d+):(\d+)(?:\.(\d+))?$/);
-  if (!match) return;
-
-  let min = parseInt(match[1], 10);
-  let sec = parseInt(match[2], 10);
-  let msVal = match[3] || '0';
-  let ms = parseInt(msVal.padEnd(3, '0').slice(0, 3), 10);
-
-  let totalMs = (min * 60 * 1000) + (sec * 1000) + ms;
-
-  // Don't restart if close to current
-  if (ss.countdownTimer && ss.lastTotalMs) {
-      const diff = Math.abs(ss.lastTotalMs - totalMs);
-      if (diff < 2000) {
-          // Continue existing timer, but update prefix/style if needed?
-          // For now, just trust the timer.
-          return;
-      }
-  }
-
-  if (ss.countdownTimer) clearInterval(ss.countdownTimer);
-
-  const tickRate = 1000; // Update every second to avoid decimal jitter unless needed
-  const showDecimals = !!match[3] || totalMs < 60000; // Show decimals if original had them or < 1 min?
-  // User asked for 3:51 -> 3:50. Let's stick to MM:SS unless original had decimals.
-  // Actually, if original had decimals, we should probably tick faster.
-
-  const useFastTick = !!match[3] || totalMs < 60000;
-  const interval = useFastTick ? 100 : 1000;
-
-  ss.lastTotalMs = totalMs;
-
-  const update = () => {
-    ss.lastTotalMs -= interval;
-    if (ss.lastTotalMs <= 0) ss.lastTotalMs = 0;
-
-    const t = ss.lastTotalMs;
-    const m = Math.floor(t / 60000);
-    const s = Math.floor((t % 60000) / 1000);
-    const centi = Math.floor((t % 1000) / 10);
-
-    let formatted;
-    if (useFastTick) {
-        formatted = `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`;
-    } else {
-        formatted = `${m}:${String(s).padStart(2, '0')}`;
-    }
-    ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
-
-    if (t <= 0) {
-      clearInterval(ss.countdownTimer);
-      ss.countdownTimer = null;
-    }
-  };
-
-  // Initial render
-  // update(); // Don't update immediately, let the interval handle it to avoid jump?
-  // Actually we should render immediately because renderTrackedMatch might have cleared it or we want to show *our* formatted time.
-  const t = totalMs;
-  const m = Math.floor(t / 60000);
-  const s = Math.floor((t % 60000) / 1000);
-  const centi = Math.floor((t % 1000) / 10);
-  let formatted = useFastTick
-      ? `${m}:${String(s).padStart(2, '0')}.${String(centi).padStart(2, '0')}`
-      : `${m}:${String(s).padStart(2, '0')}`;
-  ss.clockEl.textContent = `${prefix} ${BULLET} ${formatted}`;
-
-  ss.countdownTimer = setInterval(update, interval);
 }
 
 function renderTrackedMatch(sportKey, data) {
@@ -191,21 +112,8 @@ function renderTrackedMatch(sportKey, data) {
     const isLive = isLiveStatus(data.status) || /Q\d|OT|Half/i.test(data.clock);
     const timeInfo = isLive ? '' : ` ${BULLET} ${formatPacificTime(data.startTime)}`;
 
-    // If not live, show clock + time info directly.
-    // If live, let startCountdown handle the clock text to prevent jitter/overwrite.
-    if (!isLive) {
-       ss.clockEl.textContent  = `${data.clock || ''}${timeInfo}`;
-       if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
-    } else {
-      // Start countdown if we have a valid clock string
-      if (data.clock && /\d+:\d+/.test(data.clock)) {
-        startCountdown(ss, data.clock);
-      } else {
-        // Fallback if clock is "Halftime" or something without digits
-        ss.clockEl.textContent = data.clock;
-        if (ss.countdownTimer) { clearInterval(ss.countdownTimer); ss.countdownTimer = null; }
-      }
-    }
+    // Just show the clock from API, no countdown
+    ss.clockEl.textContent = `${data.clock || ''}${timeInfo}`;
     return;
   }
 
@@ -321,7 +229,10 @@ async function loadSportData(sportKey) {
     }
 
     // Scheduled rest
-    for (const g of restGames) ss.allEl.appendChild(buildChip(sportKey, g));
+    // User requested "Only include matches upcoming matches 12 hours from now"
+    // So we will HIDE restGames strictly.
+    // Use this section only if we want to show everything.
+    // for (const g of restGames) ss.allEl.appendChild(buildChip(sportKey, g));
 
     // Auto-track: live first, then upcoming, then scheduled
     const autoTrack = liveGames[0] || upcomingGames[0] || restGames[0];
@@ -370,7 +281,7 @@ function mountSportSection(sport) {
     root, form, input, helpEl, liveHeaderEl, liveEl,
     upcomingEl, allEl, streamRow, streamBtn,
     scoreEl, awayEl, homeEl, statusEl, clockEl, errorEl, refreshTimeEl,
-    pollTimer: null, countdownTimer: null, currentQuery: ''
+    pollTimer: null, currentQuery: ''
   });
 
   form.addEventListener('submit', (e) => { e.preventDefault(); startTracking(sport.key, input.value); });
