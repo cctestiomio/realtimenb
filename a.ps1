@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Automated Remediation Script for app.js Polling and Display Issues
+    Automated Remediation Script for Vercel Serverless Crashes (JSDOM Removal)
 
 .DESCRIPTION
-    This script parses public/app.js. It performs regex substitution to:
-    1. Increase the tracking poll interval from 1000ms to 5000ms.
-    2. Convert overlapping setInterval calls to safe recursive setTimeout promises.
-    3. Update the `buildChip` UI function to show actual live clock times for the NBA.
+    This script parses lib/providers.js. It performs regex substitutions to:
+    1. Eradicate the memory-heavy 'jsdom' import which crashes Vercel on cold boots.
+    2. Replace the fetchVlrMatchDetails function with a lightweight Regex parser.
+    3. Replace the getValorantData function with a lightweight Regex parser.
 #>
 
-$FilePath = ".\public\app.js"
+$FilePath = ".\lib\providers.js"
 
 if (-Not (Test-Path $FilePath)) {
     Write-Error "CRITICAL: Target file not found at path: $FilePath. Execution aborted."
@@ -19,82 +19,107 @@ if (-Not (Test-Path $FilePath)) {
 $Content = Get-Content -Path $FilePath -Raw
 
 # =====================================================================
-# PHASE 1: Fix Polling Interval & Overlapping Intervals
+# PHASE 1: Remove the memory-leaking JSDOM import
 # =====================================================================
+$Content = $Content -replace '(?m)^import\s+\{\s*JSDOM\s*\}\s+from\s+[''"]jsdom[''"];?\s*$', ''
 
-# 1A. Increase tracking poll ms to 5000
-$Content = $Content -replace 'const TRACK_POLL_MS\s*=\s*1000;', 'const TRACK_POLL_MS      = 5000;'
-
-# 1B. Fix the clearPolling method to use clearTimeout for pollTimer
-$Content = $Content -replace 'clearInterval\(ss\.pollTimer\);', 'clearTimeout(ss.pollTimer);'
-
-# 1C. Convert startTracking from overlapping setInterval to a safe recursive setTimeout
-$oldStartTracking = '(?s)fetchTrack\(sportKey, query, false\);\s*ss\.pollTimer = setInterval\(\(\) => fetchTrack\(sportKey, ss\.currentQuery, true\), TRACK_POLL_MS\);\s*}'
-$newStartTracking = @'
-  const poll = async () => {
-    if (ss.currentQuery !== query) return;
-    await fetchTrack(sportKey, query, true);
-    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
-  };
-  
-  fetchTrack(sportKey, query, false).then(() => {
-    ss.pollTimer = setTimeout(poll, TRACK_POLL_MS);
-  });
+# =====================================================================
+# PHASE 2: Rewrite fetchVlrMatchDetails without JSDOM
+# =====================================================================
+$oldVlrDetails = '(?s)async function fetchVlrMatchDetails\(url\).*?(?=async function getValorantData)'
+$newVlrDetails = @'
+async function fetchVlrMatchDetails(url) {
+    try {
+        const text = await fetchText(url);
+        if (!text) return {};
+        let streamUrl = null;
+        let roundScore = null;
+        
+        const siteId = text.match(/data-site-id=["']([^"']+)["']/);
+        if (siteId) streamUrl = `https://twitch.tv/${siteId[1]}`;
+        else {
+            const extLink = text.match(/class=["'][^"']*match-streams-btn-external[^"']*["'][^>]*href=["']([^"']+)["']/);
+            if (extLink) streamUrl = extLink[1];
+        }
+        
+        const activeMap = text.match(/class=["'][^"']*vm-stats-gamesnav-item[^"']*mod-active[^"']*["'][^>]*>.*?<div[^>]*>\s*(\d+)\s*:\s*(\d+)\s*<\/div>/s);
+        if (activeMap) roundScore = `${activeMap[1]}-${activeMap[2]}`;
+        else {
+            const liveScore = text.match(/class=["'][^"']*vlr-live-score[^"']*["'][^>]*>([^<]+)<\/div>/);
+            if (liveScore) roundScore = liveScore[1].trim();
+        }
+        return { streamUrl, roundScore };
+    } catch { return {}; }
 }
+
 '@
-$Content = $Content -replace $oldStartTracking, $newStartTracking
+$Content = $Content -replace $oldVlrDetails, $newVlrDetails
 
 # =====================================================================
-# PHASE 2: Fix NBA Live Display format inside buildChip
+# PHASE 3: Rewrite getValorantData without JSDOM
 # =====================================================================
+$oldVlrData = '(?s)async function getValorantData\(\).*?(?=// === CS2 ===)'
+$newVlrData = @'
+async function getValorantData() {
+  const allGames = [];
+  try {
+     const text = await fetchText('https://www.vlr.gg/matches');
+     const matchNodes = text.match(/<a[^>]*href=["']\/(\d+)\/[^"']+["'][^>]*class=["'][^"']*match-item[^"']*["'][\s\S]*?<\/a>/g) || [];
+     const now = new Date();
 
-$oldBuildChip = '(?s)function buildChip\(sportKey, game\).*?return btn;\s*}'
-$newBuildChip = @'
-function buildChip(sportKey, game) {
-  const live = isLiveStatus(game.status);
-  const btn  = document.createElement('button');
-  btn.type      = 'button';
-  btn.className = `game-chip${live ? ' chip-live' : ''}`;
-  btn.dataset.label = game.label;
+     for (const node of matchNodes) {
+         const idMatch = node.match(/href=["']\/(\d+)\//);
+         const id = idMatch ? idMatch[1] : 'unknown';
+         const matchUrl = `https://www.vlr.gg/${id}`;
 
-  let content = '';
+         const teams = [...node.matchAll(/class=["']match-item-vs-team-name["'][^>]*>\s*([^<]+?)\s*<\/div>/g)];
+         const t1 = teams[0] ? teams[0][1].trim() : 'TBD';
+         const t2 = teams[1] ? teams[1][1].trim() : 'TBD';
 
-  if (live) {
-     if (sportKey === 'nba') {
-         let clockText = (game.clock || '').trim();
-         if (clockText.toLowerCase() === 'live') {
-             clockText = '';
-         }
-         if (clockText) {
-             content = `${game.label} ${BULLET} ${clockText} ${BULLET} LIVE`;
-         } else {
-             content = `${game.label} ${BULLET} LIVE`;
-         }
-     } else {
-         const timeStr = game.clock || 'LIVE';
-         content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
+         const eventNode = node.match(/class=["']match-item-event["'][^>]*>([\s\S]*?)<\/div>/);
+         let league = eventNode ? eventNode[1].replace(/<[^>]+>/g, '').trim().split('\n')[0].trim() : 'Valorant';
+
+         const statusNode = node.match(/class=["']ml-status["'][^>]*>\s*([^<]+?)\s*<\/div>/);
+         let isLive = statusNode && statusNode[1].trim().toLowerCase() === 'live';
+
+         const scores = [...node.matchAll(/class=["']match-item-vs-team-score["'][^>]*>\s*([^<]+?)\s*<\/div>/g)];
+         let s1 = scores[0] ? scores[0][1].trim() : '0';
+         let s2 = scores[1] ? scores[1][1].trim() : '0';
+         let score = `${s1}-${s2}`;
+
+         let startTime = isLive ? now.toISOString() : new Date().toISOString();
+
+         allGames.push({
+             matchId: id, label: `${t1} vs ${t2}`, status: isLive ? 'Live' : 'Scheduled',
+             startTime, league, score, matchUrl, clock: null, streamUrl: null
+         });
      }
-  } else {
-     const timeStr = formatPacificTime(game.startTime);
-     content = `${game.label} ${BULLET} ${game.status} ${BULLET} ${timeStr}`;
-  }
 
-  btn.textContent = content.replace(/\s+/g, ' ').trim();
-  btn.addEventListener('click', () => {
-    const ss = state.get(sportKey);
-    if (ss) ss.input.value = game.label;
-    startTracking(sportKey, game.label);
-  });
-  return btn;
+     const liveGames = allGames.filter(g => g.status === 'Live');
+     const upcomingGames = allGames.filter(g => g.status !== 'Live').slice(0, 5);
+     const targets = [...liveGames, ...upcomingGames];
+
+     await Promise.all(targets.map(async (g) => {
+         const details = await fetchVlrMatchDetails(g.matchUrl);
+         if (details.streamUrl) g.streamUrl = details.streamUrl;
+         if (details.roundScore) g.score = `${g.score} (Map: ${details.roundScore})`;
+     }));
+
+  } catch(e) {}
+
+  const deduped = [...new Map(allGames.map((g) => [g.matchId, g])).values()];
+  if (!deduped.length) return { games:[], upcoming:[], warning: 'Could not scrape live data' };
+  
+  deduped.sort((a, b) => (isLiveStr(a.status)?0:1) - (isLiveStr(b.status)?0:1));
+  return { games: deduped, upcoming: deduped.filter((g) => g.status !== 'Live').slice(0, 10), warning: null };
 }
+
 '@
-
-$Content = $Content -replace $oldBuildChip, $newBuildChip
+$Content = $Content -replace $oldVlrData, $newVlrData
 
 # =====================================================================
-# PHASE 3: Write Output to Disk
+# PHASE 4: Write Output to Disk
 # =====================================================================
-
 $Content | Set-Content -Path $FilePath -NoNewline
 
-Write-Output "Remediation complete. public/app.js has been successfully updated."
+Write-Output "Remediation complete. JSDOM has been removed and Vercel functions should now respond instantly."
