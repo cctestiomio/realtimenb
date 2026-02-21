@@ -15,8 +15,19 @@ const BULLET             = '\u2022';
 const sectionsRoot = document.querySelector('#sections');
 const template     = document.querySelector('#sport-template');
 const themeToggle  = document.querySelector('#theme-toggle');
+const globalRefreshEl = document.querySelector('#global-refresh-time');
 
 const state = new Map();
+
+function updateGlobalRefresh() {
+  const d = new Date();
+  const h = d.getHours() % 12 || 12;
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0').slice(0, 2); // 2 digits
+  const ampm = d.getHours() >= 12 ? 'pm' : 'am';
+  globalRefreshEl.textContent = `Refreshed at: ${h}:${m}:${s}:${ms} ${ampm}`;
+}
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const isLiveStatus = (s = '') => /\b(live|inprogress|in.?progress|ongoing)\b/i.test(s);
@@ -83,6 +94,8 @@ function clearPolling(ss) {
 function renderTrackedMatch(sportKey, data) {
   const ss = state.get(sportKey);
   if (!ss) return;
+
+  updateGlobalRefresh();
 
   if (sportKey === 'nba') {
     renderTeam(ss.awayEl, `${data.away.city} ${data.away.name}`, data.away.code, data.away.score);
@@ -176,9 +189,12 @@ async function loadSportData(sportKey) {
     ss.upcomingEl.innerHTML = '';
     ss.allEl.innerHTML      = '';
 
+    // Using global refresher now, but can keep this or remove it.
+    // User asked for "at the top", so global is primary.
     if (ss.refreshTimeEl) {
-        ss.refreshTimeEl.textContent = `Refreshed: ${new Date().toLocaleTimeString()}`;
+        ss.refreshTimeEl.textContent = ''; // Hide per-card refresh
     }
+    updateGlobalRefresh();
 
     // Separate: live | upcoming (not live) | rest
     const liveGames     = data.games.filter((g) => isLiveStatus(g.status));
