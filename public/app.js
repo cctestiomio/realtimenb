@@ -139,6 +139,24 @@ function renderTrackedMatch(sportKey, data) {
       clockHtml += `<div style="font-weight:700; color:${color}; margin-top:6px; margin-bottom:2px; font-size:1.05em;">${timer}${killStr}</div>`;
   }
   clockHtml += `<div style="margin-top:2px; font-size:0.85em; color:var(--muted);">${formatPacificTime(data.startTime)}</div>`;
+    // Add direct Twitch links for major LoL leagues
+  if (sportKey === 'lol' && data.league) {
+      const l = data.league.toUpperCase();
+      let tw = '';
+      if (l.includes('LEC')) tw = 'lec';
+      else if (l.includes('CBLOL')) tw = 'cblol';
+      else if (l.includes('LCK')) tw = 'lck';
+      else if (l.includes('LCS')) tw = 'lcs';
+      else if (l.includes('LPL')) tw = 'lpl';
+      
+      if (tw) {
+          clockHtml += `<div style="margin-top:8px;">
+            <a href="https://twitch.tv/${tw}" target="_blank" style="color:#9146FF; text-decoration:none; font-weight:600; font-size:0.95em; display:inline-block; padding:3px 6px; border:1px solid rgba(145, 70, 255, 0.5); border-radius:4px; background:rgba(145, 70, 255, 0.1);">
+              &#128250; twitch.tv/${tw}
+            </a>
+          </div>`;
+      }
+  }
   ss.clockEl.innerHTML = clockHtml;
 }
 
