@@ -16,6 +16,8 @@
         <button id="theme-toggle" class="theme-toggle" type="button">&#127769; Dark mode</button>
       </div>
 
+      <div id="global-refresh-time" class="global-refresh-time"></div>
+
       <div id="sections" class="sections"></div>
     </main>
 
@@ -64,6 +66,7 @@
       [data-live] > * { cursor: pointer; transition: background 0.2s ease; }
       [data-live] > *:hover { background: rgba(128, 128, 128, 0.1); }
       .meta-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 0.8rem; color: var(--text-muted); }
+      .global-refresh-time { text-align: right; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-muted); }
     </style>
     <script>
       // Global listener: Clicking LIVE games opens their Twitch link
