@@ -3,12 +3,6 @@ $file = "lib\providers.js"
 Write-Host "Patching $file..." -ForegroundColor Cyan
 $src = [System.IO.File]::ReadAllText((Resolve-Path $file), [System.Text.Encoding]::UTF8)
 
-# 1. Inject a memory cache for the true game start time at the top of the file
-if (-not $src.Contains("const gameStartCache = new Map();")) {
-    $src = "const gameStartCache = new Map();`n" + $src
-}
-
-# 2. Rewrite fetchLolStats to calculate true elapsed time
 $startStr = "async function fetchLolStats"
 $endStr = "async function getLolData"
 $startIdx = $src.IndexOf($startStr)
@@ -20,21 +14,21 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
 async function fetchLolStats(gameId) {
   try {
     let isDetails = false;
-    let winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId, { headers: riotHeaders() }).catch(() => null);
+    // Removed API headers to prevent 403 rejections on public endpoints
+    let winData = await fetchJson('https://feed.lolesports.com/livestats/v1/window/' + gameId).catch(() => null);
     
     if (!winData || !winData.frames || !winData.frames.length) {
-        winData = await fetchJson('https://feed.lolesports.com/livestats/v1/details/' + gameId, { headers: riotHeaders() }).catch(() => null);
+        winData = await fetchJson('https://feed.lolesports.com/livestats/v1/details/' + gameId).catch(() => null);
         isDetails = true;
     }
     
     if (!winData || !winData.frames || !winData.frames.length) return { error: 'API returned 0 frames' };
     
-    // One-time fetch to find the absolute true start time of the game
     if (!gameStartCache.has(gameId)) {
         if (isDetails) {
             gameStartCache.set(gameId, new Date(winData.frames[0].rfc460Timestamp).getTime());
         } else {
-            const details = await fetchJson('https://feed.lolesports.com/livestats/v1/details/' + gameId, { headers: riotHeaders() }).catch(() => null);
+            const details = await fetchJson('https://feed.lolesports.com/livestats/v1/details/' + gameId).catch(() => null);
             if (details && details.frames && details.frames.length) {
                 gameStartCache.set(gameId, new Date(details.frames[0].rfc460Timestamp).getTime());
             } else {
@@ -55,7 +49,17 @@ async function fetchLolStats(gameId) {
       clock = m + ':' + String(s).padStart(2, '0');
     }
 
-    return { k1: last.blueTeam?.totalKills ?? 0, k2: last.redTeam?.totalKills ?? 0, clock };
+    // Safely calculate kills regardless of which endpoint answered
+    let k1 = 0, k2 = 0;
+    if (last.blueTeam && last.blueTeam.totalKills !== undefined) {
+        k1 = last.blueTeam.totalKills || 0;
+        k2 = last.redTeam?.totalKills || 0;
+    } else if (last.participants) {
+        k1 = last.participants.slice(0, 5).reduce((sum, p) => sum + (p.kills || 0), 0);
+        k2 = last.participants.slice(5, 10).reduce((sum, p) => sum + (p.kills || 0), 0);
+    }
+
+    return { k1, k2, clock };
   } catch (err) {
     return { error: 'Fetch failed: ' + err.message };
   }
@@ -64,8 +68,8 @@ async function fetchLolStats(gameId) {
 "@
     $src = $src.Replace($oldFunc, $newFunc)
     [System.IO.File]::WriteAllText((Resolve-Path $file), $src, [System.Text.Encoding]::UTF8)
-    Write-Host "-> Successfully patched true elapsed game timer logic!" -ForegroundColor Green
-    Write-Host "`nIMPORTANT: You must restart your dev server (close terminal, run click.bat) for this to take effect!" -ForegroundColor Yellow
+    Write-Host "-> Restored public endpoint access and fixed kill counting fallback!" -ForegroundColor Green
+    Write-Host "`nIMPORTANT: Restart your dev server (npm run dev / click.bat) for this to take effect!" -ForegroundColor Yellow
 } else {
     Write-Error "Could not find fetchLolStats block"
 }
