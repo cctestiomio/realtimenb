@@ -1,4 +1,4 @@
-const sports = [
+﻿const sports = [
   { key: 'nba',      label: 'NBA' },
   { key: 'lol',      label: 'League of Legends Esports' },
   { key: 'csgo',     label: 'CS2 / CSGO Esports' },
