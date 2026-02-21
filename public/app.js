@@ -92,6 +92,12 @@ function renderTrackedMatch(sportKey, data) {
   const ss = state.get(sportKey);
   if (!ss) return;
 
+    // Monotonic Filter: If a slow Lambda returns older data than we already have, ignore it!
+  if (data.rawDiff !== undefined) {
+      if (ss.maxDiff && data.rawDiff < ss.maxDiff) return; 
+      ss.maxDiff = data.rawDiff;
+  }
+
   updateGlobalRefresh();
   updateStreamButton(ss, data);
 
@@ -253,7 +259,13 @@ async function loadSportData(sportKey) {
     ss.allEl.innerHTML      = '';
 
     if (ss.refreshTimeEl) ss.refreshTimeEl.textContent = '';
-    updateGlobalRefresh();
+      // Monotonic Filter: If a slow Lambda returns older data than we already have, ignore it!
+  if (data.rawDiff !== undefined) {
+      if (ss.maxDiff && data.rawDiff < ss.maxDiff) return; 
+      ss.maxDiff = data.rawDiff;
+  }
+
+  updateGlobalRefresh();
 
     let liveGames     = data.games.filter((g) => isLiveStatus(g.status));
     const upcomingGames = (data.upcoming || []).filter((g) => !isLiveStatus(g.status));
