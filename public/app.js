@@ -134,7 +134,31 @@ function renderTrackedMatch(sportKey, data) {
     if (!clockText && displayClock.startsWith(` ${BULLET} `)) {
         displayClock = displayClock.replace(` ${BULLET} `, '');
     }
-    ss.clockEl.textContent = displayClock;
+            let safeLeadHtml = '';
+        if (isLive && data.clock && /Q4|OT/.test(data.clock)) {
+            const match = data.clock.match(/(?:Q4|OT\d*)\s+(\d+):(\d+(?:\.\d+)?)/);
+            if (match) {
+                const secs = (parseInt(match[1], 10) * 60) + parseFloat(match[2]);
+                if (secs > 0) {
+                    // Safe Lead = sqrt(S) + 3.5 (assuming trailing team has the ball for worst case)
+                    const target = Math.ceil(Math.sqrt(secs) + 3.5);
+                    const gap = Math.abs(data.home.score - data.away.score);
+                    const leader = data.home.score > data.away.score ? data.home.code : (data.away.score > data.home.score ? data.away.code : null);
+                    
+                    if (leader) {
+                        const isSafe = gap >= target;
+                        const color = isSafe ? 'var(--live)' : 'var(--accent)';
+                        const icon = isSafe ? '&#128274;' : '&#9889;';
+                        const statusTxt = isSafe ? 'Safe Lead' : 'Vulnerable';
+                        safeLeadHtml = `<div style="margin-top: 8px; font-size: 0.9em; font-weight: 700; color: ${color};">
+                            ${icon} ${statusTxt} 
+                            <span style="font-weight: 400; color: var(--muted);">(Gap: ${gap}, Safe at: ${target})</span>
+                        </div>`;
+                    }
+                }
+            }
+        }
+        ss.clockEl.innerHTML = displayClock + safeLeadHtml;
     return;
   }
 
