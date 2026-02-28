@@ -1,48 +1,38 @@
 $ErrorActionPreference = 'Stop'
 
 $appFile = "public\app.js"
-Write-Host "Patching $appFile..." -ForegroundColor Cyan
+Write-Host "Reverting changes in $appFile..." -ForegroundColor Cyan
 $appSrc = [System.IO.File]::ReadAllText((Resolve-Path $appFile), [System.Text.Encoding]::UTF8)
 
-# --- 1. Prevent list refresh from hijacking the currently tracked game ---
-$oldAuto = "(?s)const autoTrack = liveGames\[0\] \|\| upcomingGames\[0\];\s*if \(autoTrack\) \{\s*ss\.input\.value = autoTrack\.label;\s*startTracking\(sportKey, autoTrack\.label\);\s*\}"
+# --- 1. Revert the 5-second polling loop ---
+$badInit = "(?s)for \(const sport of sports\) \{\s*loadSportData\(sport\.key\);\s*// Auto-refresh the list every 5 seconds\s*setInterval\(\(\) => loadSportData\(sport\.key\), 5000\);\s*\}"
 
-$newAuto = @'
+$goodInit = "for (const sport of sports) loadSportData(sport.key);"
+
+if ($appSrc -match $badInit) {
+    $appSrc = $appSrc -replace $badInit, $goodInit
+    Write-Host "-> Reverted the 5-second polling loop!" -ForegroundColor Green
+} else {
+    Write-Host "-> Polling loop not found (already reverted?)." -ForegroundColor Yellow
+}
+
+# --- 2. Revert the auto-track logic ---
+$badAuto = "(?s)const autoTrack = liveGames\[0\] \|\| upcomingGames\[0\];\s*if \(autoTrack && !ss\.currentQuery\) \{\s*ss\.input\.value = autoTrack\.label;\s*startTracking\(sportKey, autoTrack\.label\);\s*\}\s*// Ensure the currently tracked game stays highlighted after the list rebuilds\s*if \(ss\.currentQuery\) \{\s*setActiveChip\(sportKey, ss\.currentQuery\);\s*\}"
+
+$goodAuto = @'
     const autoTrack = liveGames[0] || upcomingGames[0];
-    if (autoTrack && !ss.currentQuery) {
+    if (autoTrack) {
       ss.input.value = autoTrack.label;
       startTracking(sportKey, autoTrack.label);
     }
-    
-    // Ensure the currently tracked game stays highlighted after the list rebuilds
-    if (ss.currentQuery) {
-      setActiveChip(sportKey, ss.currentQuery);
-    }
 '@
 
-if ($appSrc -match $oldAuto) {
-    $appSrc = $appSrc -replace $oldAuto, $newAuto
-    Write-Host "-> Fixed auto-track hijack logic!" -ForegroundColor Green
+if ($appSrc -match $badAuto) {
+    $appSrc = $appSrc -replace $badAuto, $goodAuto
+    Write-Host "-> Reverted the auto-track logic!" -ForegroundColor Green
 } else {
-    Write-Host "-> Auto-track logic already patched or not found." -ForegroundColor Yellow
-}
-
-# --- 2. Add the 5-second polling loop for the game lists ---
-$oldInit = "(?s)for \(const sport of sports\) loadSportData\(sport\.key\);"
-$newInit = @'
-for (const sport of sports) {
-  loadSportData(sport.key);
-  // Auto-refresh the list every 5 seconds
-  setInterval(() => loadSportData(sport.key), 5000);
-}
-'@
-
-if ($appSrc -match $oldInit) {
-    $appSrc = $appSrc -replace $oldInit, $newInit
-    Write-Host "-> Added 5-second background polling for game lists!" -ForegroundColor Green
-} else {
-    Write-Host "-> Polling loop already added or not found." -ForegroundColor Yellow
+    Write-Host "-> Auto-track logic not found (already reverted?)." -ForegroundColor Yellow
 }
 
 [System.IO.File]::WriteAllText((Resolve-Path $appFile), $appSrc, [System.Text.Encoding]::UTF8)
-Write-Host "Done!" -ForegroundColor Cyan
+Write-Host "Revert complete!" -ForegroundColor Cyan
