@@ -361,10 +361,15 @@ async function loadSportData(sportKey) {
       ss.upcomingEl.appendChild(p);
     }
 
-    const autoTrack = liveGames[0] || upcomingGames[0];
-    if (autoTrack) {
+        const autoTrack = liveGames[0] || upcomingGames[0];
+    if (autoTrack && !ss.currentQuery) {
       ss.input.value = autoTrack.label;
       startTracking(sportKey, autoTrack.label);
+    }
+    
+    // Ensure the currently tracked game stays highlighted after the list rebuilds
+    if (ss.currentQuery) {
+      setActiveChip(sportKey, ss.currentQuery);
     }
   } catch {
     ss.helpEl.textContent = 'Could not load matches. Check your API routes.';
@@ -407,7 +412,11 @@ function mountSportSection(sport) {
 }
 
 for (const sport of sports) mountSportSection(sport);
-for (const sport of sports) loadSportData(sport.key);
+for (const sport of sports) {
+  loadSportData(sport.key);
+  // Auto-refresh the list every 5 seconds
+  setInterval(() => loadSportData(sport.key), 5000);
+}
 
 initTheme();
 themeToggle.addEventListener('click', () => {
